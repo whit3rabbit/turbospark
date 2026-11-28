@@ -41,9 +41,16 @@ extension AudioWorkspaceController {
             base.inputChannels = 2
         }
         guard task == .textToSpeech, clonesNatively(profile) else { return base }
-        return runClonesNatively(profile, speech: recipe.speech)
+        var request = runClonesNatively(profile, speech: recipe.speech)
             ? nativeCloneRequest(base, family: profile.family, speech: recipe.speech)
             : referenceFreeSpeechRequest(base, family: profile.family)
+        // Breeze designs a voice from the instruction alone (Voice Design);
+        // Voiceover speaks with the preset speaker and no instruction.
+        if profile.family == "breeze_tts", recipe.speech?.mode == .design {
+            let instruction = recipe.speech?.instruction.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            request.instruction = instruction.isEmpty ? nil : instruction
+        }
+        return request
     }
     /// A natively cloning run (MegaTTS3, OmniVoice, Drama 3): its reference
     /// arrives as the session PCM at 24 kHz, and consent holds only for that
@@ -68,6 +75,21 @@ extension AudioWorkspaceController {
             request.instruction = nil
             let transcript = speech?.referenceText.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             request.referenceText = transcript.isEmpty ? nil : transcript
+            return request
+        }
+        if family == "breeze_tts" {
+            // Breeze has no steps, speed or guidance weights. A clone needs
+            // the reference's exact words; an instruction directs the cloned
+            // voice (voice direction), so it is kept when the user gave one.
+            request.steps = nil
+            request.speed = 1
+            request.pW = nil
+            request.tW = nil
+            let transcript = speech?.referenceText.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            request.referenceText = transcript.isEmpty ? nil : transcript
+            let instruction = speech?.instruction.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            request.instruction = instruction.isEmpty ? nil : instruction
+            if (request.seed ?? 0) == 0 { request.seed = freshSeed() }
             return request
         }
         if family == "fish_drama3" {
@@ -132,8 +154,8 @@ extension AudioWorkspaceController {
         // the music page, so the engine's own default applies. Drama 3 has
         // no steps at all.
         request.steps = nil
-        // Drama 3 refuses any speed but 1.0, and the page hides its slider.
-        if family == "fish_drama3" { request.speed = 1 }
+        // Drama 3 and Breeze have no speed, and the page hides the slider.
+        if family == "fish_drama3" || family == "breeze_tts" { request.speed = 1 }
         return request
     }
     /// The catalog declares the CPU as this profile's runtime, so running on
@@ -190,6 +212,7 @@ extension AudioWorkspaceController {
         // native cloner's request carries none (`runRequest`).
         let clonesNatively = currentTask == .textToSpeech && Self.runClonesNatively(profile, speech: inputs.speech)
         let experimentalMetal = page == .advanced && allowExperimentalMetal
+        let cleanTranscript = cleanTranscripts
         jobTask = Task { [weak self] in
             guard let self else { return }
             let admitted = await ImageJobCoordinator.shared.acquire()
@@ -221,14 +244,15 @@ extension AudioWorkspaceController {
                     try await self.completeFinalTranscription(item: selected, into: result.id, transcription: transcription, token: token)
                     return
                 }
-                if provider != .rust && provider != .qwenMLX {
+                if provider != .rust && provider != .qwenMLX && provider != .breezeMLX {
                     throw AudioWorkspaceError.message(AppStrings.localized("Runtime unavailable"))
                 }
                 // The offline Voice Isolator renders on MLX, about 13x faster
                 // than the Rust Metal path; nil keeps the Rust session.
                 let isolator = currentTask == .enhancement ? try await self.offlineVoiceIsolator(for: profile, source: result) : nil
-                let session = provider == .qwenMLX || isolator != nil ? nil : try await self.residentSession(for: profile, portable: portable, experimentalMetal: experimentalMetal, source: result)
-                let request = Self.runRequest(inputs, task: currentTask, profile: profile)
+                let session = provider == .qwenMLX || provider == .breezeMLX || isolator != nil ? nil : try await self.residentSession(for: profile, portable: portable, experimentalMetal: experimentalMetal, source: result)
+                let request = Self.transcriptionRequest(Self.runRequest(inputs, task: currentTask, profile: profile),
+                                                        family: profile.family, clean: cleanTranscript)
                 var labelFailure: String?
                 var stoppedEarly = false
                 if currentTask == .speechToText {
@@ -275,6 +299,17 @@ extension AudioWorkspaceController {
                     var output: AudioResult
                     if provider == .qwenMLX {
                         output = try await self.synthesizeQwenSpeech(inputs, profile: profile, source: result, report: report)
+                    } else if provider == .breezeMLX {
+                        var sent = request
+                        output = try await self.synthesizeBreezeSpeech(sent, reference: pcm, profile: profile, source: result, report: report)
+                        var retakes = 0
+                        while let retake = Self.retakeRequest(after: output, sent: sent, recipeSeed: inputs.seed, retakes: retakes) {
+                            try Task.checkCancellation()
+                            guard self.valid(token) else { return }
+                            retakes += 1
+                            sent = retake
+                            output = try await self.synthesizeBreezeSpeech(sent, reference: pcm, profile: profile, source: result, report: report)
+                        }
                     } else if let isolator {
                         output = try await isolator.enhance(request, pcm: pcm, progress: report)
                     } else {
@@ -489,6 +524,20 @@ extension AudioWorkspaceController {
     var autoMeetingNotes: Bool {
         get { preferences.autoMeetingNotes ?? false }
         set { preferences.autoMeetingNotes = newValue; persistPreferences() }
+    }
+
+    var cleanTranscripts: Bool {
+        get { preferences.cleanTranscripts ?? false }
+        set { preferences.cleanTranscripts = newValue; persistPreferences() }
+    }
+
+    /// Only Fluid Speech Pro on the CPU has a clean style; every other model
+    /// refuses `transcriptStyle`, so it is set for that family alone.
+    nonisolated static let cleanTranscriptFamily = "fluid_speech_pro"
+    nonisolated static func transcriptionRequest(_ base: AudioRequest, family: String, clean: Bool) -> AudioRequest {
+        var request = base
+        request.transcriptStyle = family == cleanTranscriptFamily && clean ? "clean" : nil
+        return request
     }
 
     /// After a Meeting take's final pass, when the user turned it on.

@@ -119,6 +119,71 @@ kernel void dequant_q4_k_gemm_simd(
     }
 }
 
+// Q4_K wide loads: `dequant_q4_k_gemv_wide`'s walk, B accumulators (KERN-04).
+// Selected together with that GEMV by `TURBOSPARK_GGUF_KERNEL=wide`, never
+// alone, so verify stays bit-exact against decode. Same rules as the pair
+// above: the expressions are textually the GEMV's, only the `bi` loop is new,
+// and `dequant_q4_k_wide_parity.rs` is the evidence.
+[[kernel, max_total_threads_per_threadgroup(256)]]
+kernel void dequant_q4_k_gemm_wide(
+    device const uint8_t* W      [[buffer(0)]],
+    device const half*    x      [[buffer(1)]],
+    device half*          y      [[buffer(2)]],
+    constant uint&        M      [[buffer(3)]],
+    constant uint&        N      [[buffer(4)]],
+    constant uint&        B      [[buffer(5)]],
+    uint                  tg_idx [[threadgroup_position_in_grid]],
+    uint                  sg_idx [[simdgroup_index_in_threadgroup]],
+    uint                  lane   [[thread_index_in_simdgroup]]
+) {
+    const uint b_dim = kq_batch(B);
+    const uint row = tg_idx * kRowsPerTGQ4_K + sg_idx;
+    if (row >= M) return;
+
+    device const uint8_t* W_row = W + uint(row) * q4_k_row_bytes(N);
+    const uint n_blocks = N / kQ4_KBlockElems;
+    const uint g = lane / 8u;
+    const uint l = (lane % 8u) * 4u;
+
+    float acc[kMaxBatchRowsKQuant];
+    for (uint bi = 0; bi < b_dim; ++bi) {
+        acc[bi] = 0.0f;
+    }
+
+    for (uint b = 0; b < n_blocks; ++b) {
+        device const uint8_t* blk = W_row + b * kQ4_KBlockBytes;
+        const uint head = *(device const uint*)blk;
+        const float d = float(as_type<half>(ushort(head & 0xFFFFu)));
+        const float dmin = float(as_type<half>(ushort(head >> 16)));
+        float sc_lo, m_lo, sc_hi, m_hi;
+        q4_k_scale_min(2 * g, blk + kQ4_KScalesAt, sc_lo, m_lo);
+        q4_k_scale_min(2 * g + 1, blk + kQ4_KScalesAt, sc_hi, m_hi);
+        const float d_lo = d * sc_lo, b_lo = dmin * m_lo;
+        const float d_hi = d * sc_hi, b_hi = dmin * m_hi;
+
+        const uint q = *(device const uint*)(blk + kQ4_KQuantsAt + g * kQ4_KSubElems + l);
+        const uint at = b * kQ4_KBlockElems + g * 2 * kQ4_KSubElems + l;
+        #pragma clang loop unroll_count(4)
+        for (uint bi = 0; bi < b_dim; ++bi) {
+            device const half* x_b = x + bi * N;
+            const half4 x_lo = *(device const half4*)(x_b + at);
+            const half4 x_hi = *(device const half4*)(x_b + at + kQ4_KSubElems);
+            for (uint i = 0; i < 4; ++i) {
+                const uint byte = (q >> (8u * i)) & 0xFFu;
+                acc[bi] = fma(d_lo * float(byte & 0xFu) - b_lo, float(x_lo[i]), acc[bi]);
+                acc[bi] = fma(d_hi * float(byte >> 4) - b_hi, float(x_hi[i]), acc[bi]);
+            }
+        }
+    }
+
+    for (uint bi = 0; bi < b_dim; ++bi) {
+        const float s = simd_sum(acc[bi]);
+        if (lane == 0) {
+            y[bi * M + row] = half(s);
+        }
+    }
+}
+
 // Q5_K: `dequant_q5_k_row_simd`'s walk, B accumulators. Q4_K's two-level
 // scales (`q4_k_scale_min`, from dequant_q4_k.metal) plus a fifth bit per
 // element from `qh`, exactly as the GEMV assembles it.
@@ -249,6 +314,50 @@ kernel void dequant_q6_k_gemm_simd(
         }
     }
 
+    for (uint bi = 0; bi < b_dim; ++bi) {
+        const float s = simd_sum(acc[bi]);
+        if (lane == 0) {
+            y[bi * M + row] = half(s);
+        }
+    }
+}
+
+// Q8_0 wide loads: `dequant_q8_0_gemv_wide`'s walk, B accumulators (KERN-04).
+// Selected together with that GEMV, never alone; expressions textually the
+// GEMV's, only the `bi` loop is new. `dequant_q8_0_wide_pair_parity.rs` is the
+// evidence.
+[[kernel, max_total_threads_per_threadgroup(256)]]
+kernel void dequant_q8_0_gemm_wide(
+    device const uint8_t* W      [[buffer(0)]],
+    device const half*    x      [[buffer(1)]],
+    device half*          y      [[buffer(2)]],
+    constant uint&        M      [[buffer(3)]],
+    constant uint&        N      [[buffer(4)]],
+    constant uint&        B      [[buffer(5)]],
+    uint                  tg_idx [[threadgroup_position_in_grid]],
+    uint                  sg_idx [[simdgroup_index_in_threadgroup]],
+    uint                  lane   [[thread_index_in_simdgroup]]
+) {
+    const uint b_dim = kq_batch(B);
+    const uint row = tg_idx * kRowsPerTGQ8_0 + sg_idx;
+    if (row >= M) return;
+    const uint n_blocks = N / kQ8_0BlockElems;
+    device const uint8_t* W_row = W + uint(row) * n_blocks * kQ8_0BlockBytes;
+    const uint k = lane / 8u;
+    const uint l = (lane % 8u) * 4u;
+
+    float acc[kMaxBatchRowsKQuant];
+    for (uint bi = 0; bi < b_dim; ++bi) {
+        acc[bi] = 0.0f;
+    }
+    for (uint b = k; b < n_blocks; b += 4u) {
+        device const uint8_t* blk = W_row + b * kQ8_0BlockBytes;
+        #pragma clang loop unroll_count(4)
+        for (uint bi = 0; bi < b_dim; ++bi) {
+            const half4 xv = *(device const half4*)(x + bi * N + b * kQ8_0BlockElems + l);
+            acc[bi] = fma(q8_0_scale(blk), q8_0_wide_dot(blk, xv, l), acc[bi]);
+        }
+    }
     for (uint bi = 0; bi < b_dim; ++bi) {
         const float s = simd_sum(acc[bi]);
         if (lane == 0) {

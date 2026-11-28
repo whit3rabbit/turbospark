@@ -113,7 +113,7 @@ impl RealForwardRunner {
             (&dflash.hproj, 0),
             rows,
         )?;
-        pass.commit_and_wait();
+        pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
         Ok(())
     }
 }

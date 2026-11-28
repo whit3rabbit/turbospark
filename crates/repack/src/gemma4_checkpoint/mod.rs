@@ -28,6 +28,7 @@ mod vision_clip;
 mod vision_deepseek_ocr;
 mod vision_gemma4;
 mod vision_idefics3;
+mod vision_inkling2;
 mod vision_internvl;
 mod vision_lfm3;
 mod vision_minicpm;
@@ -91,6 +92,10 @@ pub use vision_idefics3::{
     parse_idefics3_vision_config, read_idefics3_vision_entries, IDEFICS3_BLOCK_ROLES,
     IDEFICS3_CONNECTOR_PREFIX, IDEFICS3_MODEL_TYPE, IDEFICS3_PROJECTOR_PREFIX,
     IDEFICS3_TOWER_PREFIX, SMOLVLM_MODEL_TYPE,
+};
+pub use vision_inkling2::{
+    parse_inkling2_vision_config, read_inkling2_vision_entries, INKLING2_CONTENT_IMAGE_ID,
+    INKLING2_IMAGE_TOKEN_ID, INKLING2_MODEL_TYPE, INKLING2_RESIDENT_TENSORS,
 };
 pub use vision_internvl::{
     parse_internvl_vision_config, read_internvl_vision_entries, INTERNVL_BLOCK_ROLES,

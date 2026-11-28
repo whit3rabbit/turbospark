@@ -127,6 +127,10 @@ pub(crate) fn attach_images<'a>(
             let spliced = crate::vision::attach_deepseek_ocr(runner.as_mut(), rendered, parts)?;
             return Ok((spliced, VisionScope::armed(engine)));
         }
+        if runner.inkling2_image_ids().is_some() {
+            let spliced = crate::vision::attach_inkling2(runner.as_mut(), rendered, parts)?;
+            return Ok((spliced, VisionScope::armed(engine)));
+        }
         if runner.idefics3_image_ids().is_some() {
             let spliced = crate::vision::attach_idefics3(
                 runner.as_mut(),

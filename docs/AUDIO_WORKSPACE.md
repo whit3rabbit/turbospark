@@ -107,7 +107,12 @@ its text is saved into one draft revision that each save replaces. Otherwise, or
 if the stream stops, live text is a draft assembled from bounded windows every
 15 seconds. A voice reference recording has no live text. Final refinement reads
 the saved recording with the selected batch model; a fresh install prefers
-Parakeet Ultra, then Redux, then Whisper Base, and a saved choice always wins.
+Parakeet Ultra, then Fluid Speech Pro (Core ML), then Redux, then Fluid Speech
+Pro (CPU), then Whisper Base, and a saved choice always wins. Fluid Speech Pro
+ranks below Ultra until this repo measures its WER. With its CPU row as the
+final model, the Final Transcript slot shows "Remove fillers and repeats"
+(`cleanTranscripts`, off by default), which sends `transcript_style: clean`;
+no other model receives the field.
 With none of them installed on macOS 26 or newer, the final pass uses Apple
 Speech (built-in), `SpeechAnalyzer` with `SpeechTranscriber`
 (`Audio/AppleSpeech/`). It needs no TurboSpark download: macOS fetches and
@@ -169,7 +174,8 @@ show up as a sound match. The meaning floor is untuned.
 ## Create and compare
 
 Text-to-Speech, Voice Cloning, and Voice Design have separate model choices and
-voice settings. [Qwen3-TTS](QWEN3_TTS.md) uses the native Swift MLX provider.
+voice settings. [Qwen3-TTS](QWEN3_TTS.md) and [Breeze TTS 2](BREEZE_TTS.md) use
+the native Swift MLX provider.
 Clone from an imported or saved 1 to 30 second reference region with its exact
 transcript, or explicitly choose voice embedding only. A model with the
 `voice_clone` capability ([MegaTTS3](../crates/audio/src/tts/megatts3/README.md))
@@ -269,6 +275,10 @@ modules and internal codecs are not presented as runnable jobs.
   experimental option; its audio encoder still runs on the CPU.
 - Qwen3-TTS runs Base, CustomVoice, and VoiceDesign MLX checkpoints in Swift.
   The Rust session and HTTP Audio API do not execute this family.
+- Breeze TTS 2 runs in Swift MLX on Voice Cloning (clone and direction, with
+  the exact reference transcript and consent), Voice Design, and
+  Text-to-Speech (speakers S0 to S9). Its license is non-commercial. The Rust
+  session and HTTP Audio API do not execute it.
 - Speaker diarization runs the pinned Core ML pyannote community-1 export
   (`speaker-diarization-coreml`, macOS 15+) from the Advanced page. Once it is
   installed, the Record page's final pass labels each segment of a take with a

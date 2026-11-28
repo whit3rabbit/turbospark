@@ -389,6 +389,24 @@ pub enum VisionTowerKind {
     /// trunk width, `image_token_id` the bare `<image>` marker. The start and
     /// end ids are 0.
     SigLipOv,
+    /// The Inkling 2 Mini tower (`docs/INKLING2_VISION_PHASE0.md`): a
+    /// CLIP-style ViT with a class row, LayerNorm blocks with separate biased
+    /// q/k/v, per-branch layer scale, an exact-GELU MLP, a learned 32x32
+    /// position table resampled bilinearly with border clamping, 2-D rope
+    /// (theta 10000, `[w | h]`, 1-indexed, class row at `(0, 0)`), full
+    /// attention within one image, and a bias-free two-linear GELU merger
+    /// over each 2x2 patch block. No resize: images are padded to 40 px.
+    ///
+    /// Field meanings: `depth` 23, `patch_size` 20, `spatial_merge_size` 2
+    /// (one trunk token per 40 px tile), `temporal_patch_size` 1 (the
+    /// checkpoint's `temporal_patch_size: 2` is unused for still images: the
+    /// patch embedding has no temporal axis), `num_position_embeddings`
+    /// 1024 (the 32x32 table, the class row is separate), `out_hidden_size`
+    /// the trunk width. `vision_start_token_id` is `<|content_image|>`, which
+    /// the template renders right before the placeholder; the end id is 0
+    /// (no image end token). The rope theta, the layer-norm epsilon (1e-5)
+    /// and the cap of 4,096 tiles are properties of the kind.
+    Inkling2,
     /// The Qwen2-VL tower, the pre-2.5 sibling of [`VisionTowerKind::Qwen25Vl`]
     /// (`docs/QWEN2VL_VISION_PHASE0.md`): the same conv patch embed, the same
     /// 2-D rope with no absolute position table, and the same fused-qkv
@@ -485,6 +503,7 @@ impl VisionTowerKind {
             VisionTowerKind::SigLip => "siglip",
             VisionTowerKind::DeepseekOcr => "deepseek_ocr",
             VisionTowerKind::SigLipOv => "siglip_ov",
+            VisionTowerKind::Inkling2 => "inkling2",
             VisionTowerKind::InternViT => "internvit",
             VisionTowerKind::SigLipNaViT => "siglip_navit",
         }
@@ -507,6 +526,7 @@ impl VisionTowerKind {
             "siglip" => Some(VisionTowerKind::SigLip),
             "deepseek_ocr" => Some(VisionTowerKind::DeepseekOcr),
             "siglip_ov" => Some(VisionTowerKind::SigLipOv),
+            "inkling2" => Some(VisionTowerKind::Inkling2),
             "internvit" => Some(VisionTowerKind::InternViT),
             "siglip_navit" => Some(VisionTowerKind::SigLipNaViT),
             _ => None,

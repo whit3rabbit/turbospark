@@ -60,6 +60,7 @@ impl RealForwardRunner {
             .or_else(|| self.qwen25_vision.as_ref().map(|v| v.last_scratch_bytes))
             .or_else(|| self.qwen2_vision.as_ref().map(|v| v.last_scratch_bytes))
             .or_else(|| self.muse_vision.as_ref().map(|v| v.last_scratch_bytes))
+            .or_else(|| self.inkling2_vision.as_ref().map(|v| v.last_scratch_bytes))
     }
 
     /// What a page of `seq` patches WOULD cost in scratch, predicted rather
@@ -779,6 +780,7 @@ impl RealForwardRunner {
             .or_else(|| self.qwen25_vision.as_ref().map(|v| v.is_sidecar()))
             .or_else(|| self.qwen2_vision.as_ref().map(|v| v.is_sidecar()))
             .or_else(|| self.muse_vision.as_ref().map(|v| v.is_sidecar()))
+            .or_else(|| self.inkling2_vision.as_ref().map(|v| v.is_sidecar()))
     }
 
     /// Free the vision tower's open resources, without forgetting a sidecar
@@ -814,6 +816,7 @@ impl RealForwardRunner {
         self.lfm3_vision = None;
         self.clip_vision = None;
         self.muse_vision = None;
+        self.inkling2_vision = None;
         self.minicpm_vision = None;
         self.pixtral_vision = None;
         self.siglip_vision = None;
@@ -1170,12 +1173,13 @@ impl RealForwardRunner {
                 | model_io::VisionTowerKind::SigLip
                 | model_io::VisionTowerKind::DeepseekOcr
                 | model_io::VisionTowerKind::SigLipOv
+                | model_io::VisionTowerKind::Inkling2
                 | model_io::VisionTowerKind::InternViT
                 | model_io::VisionTowerKind::SigLipNaViT
         ) {
             return Err(RealForwardError::Unsupported(
                 "set_prompt_vision_flat needs a CLIP, Pixtral, SigLIP, OneVision, DeepSeek-OCR, \
-                 InternViT or siglip_navit vision tower"
+                 Inkling 2, InternViT or siglip_navit vision tower"
                     .to_string(),
             ));
         }
@@ -1387,6 +1391,137 @@ impl RealForwardRunner {
                 eoi: v.vision_end_token_id as i32,
             },
         )
+    }
+
+    /// `(content_image, placeholder)` for an Inkling 2 prompt, read off the
+    /// install (or the attached sidecar), or `None` when this tower is not an
+    /// Inkling 2 one. The template renders `<|content_image|>` and one
+    /// placeholder per image; the front end expands the placeholder to one id
+    /// per 40 px tile (`turbospark_vision_io::inkling2_expand_image_placeholders`).
+    pub fn inkling2_image_ids(&self) -> Option<(i32, i32)> {
+        let v = &self.arch.vision;
+        (v.is_active() && v.tower == model_io::VisionTowerKind::Inkling2)
+            .then_some((v.vision_start_token_id as i32, v.image_token_id as i32))
+    }
+
+    /// Encode one image through the Inkling 2 tower
+    /// (`docs/INKLING2_VISION_PHASE0.md`): `[tiles, text_hidden]` FP16 rows in
+    /// tile raster order, injected with [`Self::set_prompt_vision_flat`].
+    pub fn encode_image_inkling2(
+        &mut self,
+        patches: &turbospark_vision_io::Inkling2Patches,
+    ) -> Result<crate::vision::VisionEmbedding, RealForwardError> {
+        self.encode_image_inkling2_inner(patches, None)
+            .map(|(e, _)| e)
+    }
+
+    /// [`Self::encode_image_inkling2`] plus the residual stream after the
+    /// patch embedding, the first block and the last, for the parity gate.
+    pub fn encode_image_inkling2_with_stages(
+        &mut self,
+        patches: &turbospark_vision_io::Inkling2Patches,
+    ) -> Result<(crate::vision::VisionEmbedding, crate::vision::VisionStages), RealForwardError>
+    {
+        let (e, s) = self
+            .encode_image_inkling2_inner(patches, Some(crate::vision::VisionStages::default()))?;
+        Ok((e, s.expect("requested just above")))
+    }
+
+    /// The whole Inkling 2 image path for a rendered prompt, shared by the
+    /// CLI, the server and the FFI: preprocess each image (capped at
+    /// `max_tokens` tiles), expand each rendered placeholder to one id per
+    /// tile, encode, and inject. Returns the ids to prefill. `rendered` holds
+    /// one `<|content_image|><|unused_200054|>` per image, in order.
+    pub fn attach_inkling2_images(
+        &mut self,
+        rendered: &[i32],
+        images: &[turbospark_vision_io::Rgb8Image],
+        max_tokens: usize,
+    ) -> Result<Vec<i32>, RealForwardError> {
+        let (content, placeholder) = self.inkling2_image_ids().ok_or_else(|| {
+            RealForwardError::Unsupported(
+                "this install's vision tower is not an Inkling 2 one".to_string(),
+            )
+        })?;
+        // The expander keys on the vision-io constants; an install that
+        // declares other ids is a checkpoint this port has not read.
+        if (content, placeholder)
+            != (
+                turbospark_vision_io::INKLING2_CONTENT_IMAGE_ID,
+                turbospark_vision_io::INKLING2_IMAGE_TOKEN_ID,
+            )
+        {
+            return Err(RealForwardError::Unsupported(format!(
+                "this Inkling 2 tower declares image ids ({content}, {placeholder}); the \
+                 template this port read renders ({}, {})",
+                turbospark_vision_io::INKLING2_CONTENT_IMAGE_ID,
+                turbospark_vision_io::INKLING2_IMAGE_TOKEN_ID
+            )));
+        }
+        let mut patches = Vec::with_capacity(images.len());
+        for (i, image) in images.iter().enumerate() {
+            patches.push(
+                turbospark_vision_io::inkling2_preprocess(image, max_tokens)
+                    .map_err(|e| RealForwardError::Unsupported(format!("image {i}: {e}")))?,
+            );
+        }
+        let counts: Vec<usize> = patches.iter().map(|p| p.tokens()).collect();
+        let (expanded, spans) = turbospark_vision_io::inkling2_expand_image_placeholders(
+            rendered, &counts,
+        )
+        .map_err(|e| {
+            RealForwardError::Unsupported(format!(
+                "cannot place {} image(s) in this prompt: {e}; the template renders one \
+                         <|content_image|><|unused_200054|> per image part",
+                images.len()
+            ))
+        })?;
+        let mut rows = Vec::with_capacity(patches.len());
+        for p in &patches {
+            rows.push(self.encode_image_inkling2(p)?.rows);
+        }
+        self.set_prompt_vision_flat(&rows, &spans, expanded.len())?;
+        Ok(expanded)
+    }
+
+    fn encode_image_inkling2_inner(
+        &mut self,
+        patches: &turbospark_vision_io::Inkling2Patches,
+        capture: Option<crate::vision::VisionStages>,
+    ) -> Result<
+        (
+            crate::vision::VisionEmbedding,
+            Option<crate::vision::VisionStages>,
+        ),
+        RealForwardError,
+    > {
+        if self.arch.vision.tower != model_io::VisionTowerKind::Inkling2
+            || !self.arch.vision.is_active()
+        {
+            return Err(RealForwardError::Unsupported(
+                "this install declares no inkling2 vision tower; attach the \
+                 inkling2-mini-vision-tower sidecar"
+                    .to_string(),
+            ));
+        }
+        if self.inkling2_vision.is_none() {
+            self.inkling2_vision = Some(match &self.vision_sidecar_dir {
+                Some(dir) => crate::vision::inkling2::Inkling2VisionTower::open_with_sidecar(
+                    dir,
+                    &self.context,
+                    &self.arch,
+                )?,
+                None => crate::vision::inkling2::Inkling2VisionTower::open(
+                    &self.install_dir,
+                    &self.context,
+                    &self.weights,
+                    &self.index,
+                    &self.arch,
+                )?,
+            });
+        }
+        let tower = self.inkling2_vision.as_mut().expect("opened just above");
+        tower.run(&mut self.context, &self.weights, patches, capture)
     }
 
     /// Encode one image through this install's Gemma 4 tower

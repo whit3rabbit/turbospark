@@ -82,6 +82,11 @@ impl KernelBench for GdnDelta {
         "gated-DeltaNet delta kernels at the install's geometry: decode, eager and lazy prefill, state fold, over rows"
     }
 
+    /// `--oracle on`: also check decode and eager prefill against FP64.
+    fn flags(&self) -> &'static [&'static str] {
+        &["oracle"]
+    }
+
     fn cases(&self, subject: &Subject, _opts: &BenchOpts) -> Result<Vec<Case>, String> {
         let arch = subject.arch()?;
         let shape = shape_of(arch)?;
@@ -106,7 +111,33 @@ impl KernelBench for GdnDelta {
         let arch = subject.arch()?;
         let shape = shape_of(arch)?;
         let layers = layer_count(arch);
-        run_shape(context, &case.label, shape, layers, opts)
+        let mut result = run_shape(context, &case.label, shape, layers, opts)?;
+        match case.params["oracle"].as_str() {
+            None | Some("off") => {}
+            Some("on") => {
+                let arms = oracle_shape(context, shape)?;
+                if let Some(blind) = arms.iter().find(|a| !a.caught) {
+                    return Err(format!(
+                        "gdn_delta oracle cannot see a dt_bias shift of {ORACLE_DT_SHIFT} on {} \
+                         (perturbed y {:.3e}, state {:.3e}; tolerance {:.3e}, {:.3e}): \
+                         its tolerance is too loose to judge a candidate",
+                        blind.arm,
+                        blind.perturbed_y.max_abs,
+                        blind.perturbed_state.max_abs,
+                        blind.tol_y,
+                        blind.tol_state
+                    ));
+                }
+                result.subject.insert("oracle".into(), json!(arms));
+                result.notes.push(
+                    "oracle: decode and prefill_eager against FP64 on the pooled seeds; \
+                     tolerance max(floor x |ref|, 3 x the incumbent's error), and a dt_bias shift must exceed it"
+                        .into(),
+                );
+            }
+            Some(other) => return Err(format!("--oracle {other:?}: expected on or off")),
+        }
+        Ok(result)
     }
 }
 
@@ -181,6 +212,13 @@ impl Dims {
 }
 
 fn inputs(context: &MetalContext, d: &Dims, max_rows: usize) -> Inputs {
+    inputs_shifted(context, d, max_rows, 0.0)
+}
+
+/// [`inputs`] with `dt_shift` added to every `dt_bias` before its bf16
+/// rounding: the oracle's deliberately perturbed gate. 0.0 gives the bench's
+/// own bytes.
+fn inputs_shifted(context: &MetalContext, d: &Dims, max_rows: usize, dt_shift: f32) -> Inputs {
     let hv = d.shape.num_v_heads as usize;
     let c = d.shape.qkv_dim() as usize;
     Inputs {
@@ -188,7 +226,7 @@ fn inputs(context: &MetalContext, d: &Dims, max_rows: usize) -> Inputs {
         a: context.new_buffer_with_data(&f16_bytes(0xA000, max_rows * hv, 1.5)),
         b: context.new_buffer_with_data(&f16_bytes(0xB000, max_rows * hv, 1.0)),
         a_log: context.new_buffer_with_data(&bf16_bytes(0xA100, hv, 1.25, 0.25)),
-        dt_bias: context.new_buffer_with_data(&bf16_bytes(0xA200, hv, 0.5, 0.0)),
+        dt_bias: context.new_buffer_with_data(&bf16_bytes(0xA200, hv, 0.5, dt_shift)),
         k_tape: context.new_buffer_with_data(&f16_bytes(0xC000, max_rows * d.k_width, 0.5)),
     }
 }
@@ -432,6 +470,176 @@ pub fn run_shape(
     })
 }
 
+// ---- FP64 oracle (KERN-13) ----
+
+/// The pooled fixture set: initial-state seeds the oracle runs every arm on.
+pub const ORACLE_SEEDS: [u64; 4] = [0x5EED, 0x0A11, 0xBEEF, 0xF00D];
+/// Rows the eager prefill arm runs in the oracle.
+pub const ORACLE_ROWS: usize = 8;
+/// The perturbed arm's `dt_bias` shift: a small gate bug the oracle must see.
+pub const ORACLE_DT_SHIFT: f32 = 0.01;
+/// Floors, relative to the largest reference magnitude, set 2026-11-26 from
+/// the incumbent's pooled error at Qwen3.6 and a small geometry (test
+/// `oracle_records_the_incumbent_error_and_catches_a_perturbed_gate`): y
+/// measured 2.3e-4 to 3.8e-4, the `half` store of y, so its floor is one half
+/// rounding step (2^-11); the f32 state measured 1.3e-7 to 3.6e-7, so its
+/// floor is 8 f32 rounding steps (8 x 2^-23).
+pub const ORACLE_FLOOR_REL_Y: f64 = 4.8828125e-4;
+pub const ORACLE_FLOOR_REL_STATE: f64 = 9.5367431640625e-7;
+
+/// The largest error and reference magnitude over the pooled seeds.
+#[derive(Debug, Clone, Copy, Default, PartialEq, serde::Serialize)]
+pub struct Pooled {
+    pub max_abs: f64,
+    pub max_ref: f64,
+}
+
+impl Pooled {
+    fn add(&mut self, s: compute::oracle::ErrorStats) {
+        self.max_abs = self.max_abs.max(s.max_abs);
+        self.max_ref = self.max_ref.max(s.max_ref);
+    }
+
+    fn rel(&self) -> f64 {
+        if self.max_ref > 0.0 {
+            self.max_abs / self.max_ref
+        } else {
+            self.max_abs
+        }
+    }
+}
+
+/// One arm's oracle reading: the shipped kernel and the perturbed run, both
+/// against FP64, and the tolerance a candidate must meet.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct OracleArm {
+    pub arm: String,
+    pub rows: usize,
+    pub y: Pooled,
+    pub state: Pooled,
+    pub y_rel: f64,
+    pub state_rel: f64,
+    pub perturbed_y: Pooled,
+    pub perturbed_state: Pooled,
+    pub tol_y: f64,
+    pub tol_state: f64,
+    /// The perturbed run exceeded the tolerance on y or state.
+    pub caught: bool,
+}
+
+fn f16_vals(seed: u64, n: usize, scale: f32) -> Vec<f64> {
+    stream(seed, n, scale)
+        .into_iter()
+        .map(|v| f16::from_f32(v).to_f64())
+        .collect()
+}
+
+fn bf16_vals(seed: u64, n: usize, scale: f32, center: f32) -> Vec<f64> {
+    stream(seed, n, scale)
+        .into_iter()
+        .map(|v| bf16::from_f32(center + v).to_f64())
+        .collect()
+}
+
+/// The FP64 reference for `rows` rows from the state `seed` gives, on the
+/// unperturbed inputs: `(y, final state)`.
+fn reference(d: &Dims, seed: u64, rows: usize, max_rows: usize) -> (Vec<f64>, Vec<f64>) {
+    let hv = d.shape.num_v_heads as usize;
+    let c = d.shape.qkv_dim() as usize;
+    let dims = compute::gdn::GdnDims {
+        num_k_heads: d.shape.num_k_heads as usize,
+        num_v_heads: hv,
+        key_head_dim: d.shape.key_head_dim as usize,
+        value_head_dim: d.shape.value_head_dim as usize,
+        conv_kernel_size: d.shape.conv_kernel_size as usize,
+    };
+    let conv = f16_vals(0xD1CE, max_rows * c, 1.0);
+    let a = f16_vals(0xA000, max_rows * hv, 1.5);
+    let b = f16_vals(0xB000, max_rows * hv, 1.0);
+    let a_log = bf16_vals(0xA100, hv, 1.25, 0.25);
+    let dt_bias = bf16_vals(0xA200, hv, 0.5, 0.0);
+    let mut state: Vec<f64> = stream(seed, d.state_len, 0.05)
+        .into_iter()
+        .map(f64::from)
+        .collect();
+    let mut y = Vec::with_capacity(rows * d.vd);
+    for r in 0..rows {
+        y.extend(compute::oracle::gdn_delta_step_f64(
+            dims,
+            &conv[r * c..][..c],
+            &a[r * hv..][..hv],
+            &b[r * hv..][..hv],
+            &a_log,
+            &dt_bias,
+            &mut state,
+        ));
+    }
+    (y, state)
+}
+
+/// One GPU dispatch of `arm` from the state `seed` gives: `(y, state)`.
+fn gpu_once(
+    context: &mut MetalContext,
+    arm: &str,
+    d: &Dims,
+    ins: &Inputs,
+    seed: u64,
+    rows: usize,
+    max_rows: usize,
+) -> Result<(Vec<f32>, Vec<f32>), String> {
+    let m = mutable(context, d, max_rows, seed);
+    autorelease_pool(|| -> Result<(), String> {
+        let pass = context.begin_pass();
+        encode(context, &pass, arm, d, ins, &m, rows as u32)?;
+        pass.commit_checked().map_err(|e| e.to_string())?.wait();
+        Ok(())
+    })?;
+    let y = gpu::read_buffer_f16(&m.y, 0, rows * d.vd)
+        .into_iter()
+        .map(f16::to_f32)
+        .collect();
+    Ok((y, gpu::read_f32_buffer(&m.state, d.state_len)))
+}
+
+/// Runs the oracle for `decode` and `prefill_eager` at `shape`.
+pub fn oracle_shape(context: &mut MetalContext, shape: GdnShape) -> Result<Vec<OracleArm>, String> {
+    use compute::oracle::{error_stats, oracle_tolerance};
+    let d = Dims::new(shape);
+    let max_rows = ORACLE_ROWS;
+    let ins = inputs(context, &d, max_rows);
+    let bent = inputs_shifted(context, &d, max_rows, ORACLE_DT_SHIFT);
+    let mut out = Vec::new();
+    for (arm, rows) in [("decode", 1), ("prefill_eager", ORACLE_ROWS)] {
+        let (mut y, mut state, mut py, mut ps) = Default::default();
+        for &seed in &ORACLE_SEEDS {
+            let (want_y, want_state) = reference(&d, seed, rows, max_rows);
+            let (gy, gs) = gpu_once(context, arm, &d, &ins, seed, rows, max_rows)?;
+            Pooled::add(&mut y, error_stats(&gy, &want_y));
+            Pooled::add(&mut state, error_stats(&gs, &want_state));
+            let (by, bs) = gpu_once(context, arm, &d, &bent, seed, rows, max_rows)?;
+            Pooled::add(&mut py, error_stats(&by, &want_y));
+            Pooled::add(&mut ps, error_stats(&bs, &want_state));
+        }
+        let (y, state, py, ps): (Pooled, Pooled, Pooled, Pooled) = (y, state, py, ps);
+        let tol_y = oracle_tolerance(ORACLE_FLOOR_REL_Y * y.max_ref, y.max_abs);
+        let tol_state = oracle_tolerance(ORACLE_FLOOR_REL_STATE * state.max_ref, state.max_abs);
+        out.push(OracleArm {
+            arm: arm.into(),
+            rows,
+            y_rel: y.rel(),
+            state_rel: state.rel(),
+            y,
+            state,
+            perturbed_y: py,
+            perturbed_state: ps,
+            tol_y,
+            tol_state,
+            caught: py.max_abs > tol_y || ps.max_abs > tol_state,
+        });
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -450,6 +658,39 @@ mod tests {
         assert_eq!(stream(7, 64, 0.5), stream(7, 64, 0.5));
         assert_ne!(stream(7, 64, 0.5), stream(8, 64, 0.5));
         assert!(stream(7, 4096, 0.5).iter().all(|v| v.abs() <= 0.5));
+    }
+
+    /// Qwen3.6 GDN geometry and a small one.
+    fn oracle_shapes() -> [GdnShape; 2] {
+        let shape = |hk, hv, dk, dv| GdnShape {
+            num_k_heads: hk,
+            num_v_heads: hv,
+            key_head_dim: dk,
+            value_head_dim: dv,
+            conv_kernel_size: 4,
+        };
+        [shape(16, 32, 128, 128), shape(2, 4, 64, 32)]
+    }
+
+    #[test]
+    fn oracle_records_the_incumbent_error_and_catches_a_perturbed_gate() {
+        let mut context = MetalContext::new().expect("Metal device");
+        for shape in oracle_shapes() {
+            let arms = oracle_shape(&mut context, shape).expect("oracle");
+            for a in &arms {
+                eprintln!(
+                    "{:?} {}: y {:.3e} rel {:.3e}, state {:.3e} rel {:.3e}; perturbed y {:.3e}, state {:.3e}",
+                    (shape.num_k_heads, shape.num_v_heads, shape.key_head_dim, shape.value_head_dim),
+                    a.arm, a.y.max_abs, a.y_rel, a.state.max_abs, a.state_rel,
+                    a.perturbed_y.max_abs, a.perturbed_state.max_abs
+                );
+                assert!(a.caught, "{a:?}");
+                // The shipped kernel agrees with FP64 to storage rounding;
+                // a wrong reference (or a regressed kernel) fails here.
+                assert!(a.y_rel <= ORACLE_FLOOR_REL_Y, "{a:?}");
+                assert!(a.state_rel <= ORACLE_FLOOR_REL_STATE, "{a:?}");
+            }
+        }
     }
 
     #[test]

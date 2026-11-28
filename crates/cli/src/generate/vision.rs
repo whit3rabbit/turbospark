@@ -70,6 +70,9 @@ pub(crate) fn preprocess_params(session: &Session) -> Result<PreprocessParams, S
     if session.runner.siglip_image_ids().is_some() {
         return Err("internal: the SigLIP tower takes attach_siglip".to_string());
     }
+    if session.runner.inkling2_image_ids().is_some() {
+        return Err("internal: the Inkling 2 tower takes attach_inkling2".to_string());
+    }
     let path = session.runner.vision_dir().join("preprocessor_config.json");
     let json = std::fs::read_to_string(&path).map_err(|e| {
         format!(
@@ -382,6 +385,30 @@ pub(crate) fn attach_clip(
         .set_prompt_vision_flat(&rows, &spans, expanded.len())
         .map_err(|e| format!("cannot inject the encoded images: {e}"))?;
     Ok(expanded)
+}
+
+/// The Inkling 2 tower's whole `--image` path
+/// (`docs/INKLING2_VISION_PHASE0.md`): decode each file the way the reference
+/// processor sees it (transparency composited onto its checkerboard), then the
+/// runner's shared preprocess, expand, encode and inject. Returns the expanded
+/// ids to prefill.
+pub(crate) fn attach_inkling2(
+    session: &mut Session,
+    rendered: &[i32],
+    paths: &[String],
+) -> Result<Vec<i32>, String> {
+    let mut images = Vec::with_capacity(paths.len());
+    for image_path in paths {
+        let bytes = std::fs::read(image_path).map_err(|e| format!("--image {image_path}: {e}"))?;
+        images.push(
+            turbospark_vision_io::inkling2_decode_image_bytes(&bytes)
+                .map_err(|e| format!("--image {image_path}: {e}"))?,
+        );
+    }
+    session
+        .runner
+        .attach_inkling2_images(rendered, &images, turbospark_vision_io::INKLING2_MAX_TOKENS)
+        .map_err(|e| e.to_string())
 }
 
 /// The SigLIP (DeepSeek-VL2) tower's whole `--image` path

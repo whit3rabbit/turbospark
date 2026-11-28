@@ -99,7 +99,7 @@ pub(super) fn stage_attention_inputs_batch<'a>(
         first_query_position,
         rope_positions,
     )?;
-    pass.commit_and_wait();
+    pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
     Ok(prepared)
 }
 
@@ -309,7 +309,9 @@ impl RealForwardRunner {
             if use_batch_attention {
                 pass.take()
                     .expect("chunk pass remains active before batch staging")
-                    .commit_and_wait();
+                    .commit_checked()
+                    .map_err(RealForwardError::Gpu)?
+                    .wait();
                 let prepared = stage_attention_inputs_batch(
                     context,
                     weights,
@@ -598,7 +600,11 @@ impl RealForwardRunner {
             pass.relabel("llama dense chunk cb (no head)");
         }
         let t_wait = Instant::now();
-        self.phases.final_cb_gpu_nanos += (pass.commit_and_wait_with_gpu_time() * 1e9) as u64;
+        self.phases.final_cb_gpu_nanos += (pass
+            .commit_checked()
+            .map_err(RealForwardError::Gpu)?
+            .wait_with_gpu_time()
+            * 1e9) as u64;
         self.phases.final_wait_nanos += t_wait.elapsed().as_nanos() as u64;
         self.kv.advance_by(m);
 

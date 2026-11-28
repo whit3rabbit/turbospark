@@ -165,26 +165,27 @@ pub(crate) fn pixel_shuffle<T: Copy + Default>(
     out
 }
 
-/// Per-image GPU scratch.
-struct MuseScratch {
-    seq: usize,
-    tile: usize,
-    rows: gpu::MetalBuffer,
-    pos: gpu::MetalBuffer,
-    x: gpu::MetalBuffer,
-    normed: gpu::MetalBuffer,
-    q: gpu::MetalBuffer,
-    k: gpu::MetalBuffer,
-    v: gpu::MetalBuffer,
-    attn: gpu::MetalBuffer,
-    proj: gpu::MetalBuffer,
-    mlp: gpu::MetalBuffer,
-    freqs: gpu::MetalBuffer,
-    segments: Vec<usize>,
+/// Per-image GPU scratch. Shared with the Inkling 2 tower (`inkling2.rs`),
+/// whose block is this one with a single whole-image attention segment.
+pub(super) struct MuseScratch {
+    pub(super) seq: usize,
+    pub(super) tile: usize,
+    pub(super) rows: gpu::MetalBuffer,
+    pub(super) pos: gpu::MetalBuffer,
+    pub(super) x: gpu::MetalBuffer,
+    pub(super) normed: gpu::MetalBuffer,
+    pub(super) q: gpu::MetalBuffer,
+    pub(super) k: gpu::MetalBuffer,
+    pub(super) v: gpu::MetalBuffer,
+    pub(super) attn: gpu::MetalBuffer,
+    pub(super) proj: gpu::MetalBuffer,
+    pub(super) mlp: gpu::MetalBuffer,
+    pub(super) freqs: gpu::MetalBuffer,
+    pub(super) segments: Vec<usize>,
 }
 
 /// Encode one block over `s.x` in place.
-fn encode_block(
+pub(super) fn encode_block(
     context: &mut gpu::MetalContext,
     pass: &gpu::PassEncoder,
     slot: &gpu::MetalBuffer,
@@ -416,7 +417,7 @@ pub(crate) struct MuseVisionTower {
     pub(crate) last_scratch_bytes: u64,
 }
 
-fn read_fp16_host(
+pub(super) fn read_fp16_host(
     weights: &gpu::ResidentGpuWeights,
     local: u64,
     elems: usize,
@@ -702,7 +703,7 @@ impl MuseVisionTower {
                 LN_EPS,
             )
             .map_err(e)?;
-            pass.commit_and_wait();
+            pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
             if let Some(c) = capture.as_mut() {
                 c.patch_embed = read_bits(&s.x, n_wide);
             }
@@ -714,7 +715,7 @@ impl MuseVisionTower {
                 })?;
                 let pass = context.begin_pass();
                 encode_block(context, &pass, &slots[slot], block_roles, &s, &shape, n)?;
-                pass.commit_and_wait();
+                pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
                 if let Some(c) = capture.as_mut() {
                     if n == 0 {
                         c.block_first = read_bits(&s.x, n_wide);
@@ -740,7 +741,7 @@ impl MuseVisionTower {
                 LN_EPS,
             )
             .map_err(e)?;
-            pass.commit_and_wait();
+            pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
             let in_window_order = read_bits(&s.normed, n_wide);
             let mut raster = vec![0u16; in_window_order.len()];
             for (j, &patch) in order.iter().enumerate() {
@@ -818,7 +819,7 @@ impl MuseVisionTower {
                 OUT_RMS_EPS,
             )
             .map_err(e)?;
-            pass.commit_and_wait();
+            pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
 
             let rows = read_bits(&out, merged * shape.out_hidden);
             if let Some(i) = rows
@@ -843,7 +844,7 @@ impl MuseVisionTower {
     }
 }
 
-fn read_bits(buffer: &gpu::MetalBuffer, count: usize) -> Vec<u16> {
+pub(super) fn read_bits(buffer: &gpu::MetalBuffer, count: usize) -> Vec<u16> {
     gpu::read_buffer_f16(buffer, 0, count)
         .into_iter()
         .map(|v| v.to_bits())

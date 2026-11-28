@@ -149,7 +149,10 @@ impl RealForwardRunner {
             for layer in 0..arch.num_layers as usize {
                 self.encode_gemma4_layer_attn_and_router(&pass, layer, position, seq_len, base, 0)?;
 
-                let cb1 = pass.commit().waiting_on_drop();
+                let cb1 = pass
+                    .commit_checked()
+                    .map_err(RealForwardError::Gpu)?
+                    .waiting_on_drop();
                 let t_wait = Instant::now();
                 self.phases.cb1_gpu_nanos += (cb1.wait_with_gpu_time() * 1e9) as u64;
                 self.phases.gpu_wait_nanos += t_wait.elapsed().as_nanos() as u64;
@@ -180,7 +183,10 @@ impl RealForwardRunner {
             for layer in 0..arch.num_layers as usize {
                 self.encode_gemma4_layer_attn_and_router(&pass, layer, position, seq_len, base, 0)?;
 
-                let cb1 = pass.commit().waiting_on_drop();
+                let cb1 = pass
+                    .commit_checked()
+                    .map_err(RealForwardError::Gpu)?
+                    .waiting_on_drop();
                 let _shared_pass = if self.shared_cb_overlap {
                     foundation::engaged!("shared_cb");
                     Some(self.encode_shared_expert_branch(
@@ -250,7 +256,11 @@ impl RealForwardRunner {
 
                 if self.routed_pipeline {
                     foundation::engaged!("routed_pipeline");
-                    pending_routed.set(pass.commit().waiting_on_drop());
+                    pending_routed.set(
+                        pass.commit_checked()
+                            .map_err(RealForwardError::Gpu)?
+                            .waiting_on_drop(),
+                    );
                     pass = self.context.begin_pass_labeled("cb1 (attn+router)");
                 }
             }
@@ -311,7 +321,11 @@ impl RealForwardRunner {
             pass.relabel("final cb (prefill, no head)");
         }
         let t_wait = Instant::now();
-        self.phases.final_cb_gpu_nanos += (pass.commit_and_wait_with_gpu_time() * 1e9) as u64;
+        self.phases.final_cb_gpu_nanos += (pass
+            .commit_checked()
+            .map_err(RealForwardError::Gpu)?
+            .wait_with_gpu_time()
+            * 1e9) as u64;
         self.phases.final_wait_nanos += t_wait.elapsed().as_nanos() as u64;
         self.kv.advance();
         // The command buffer has been waited on, so every layer's capture

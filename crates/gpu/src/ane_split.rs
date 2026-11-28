@@ -398,6 +398,7 @@ pub fn begin_pass_after(
     value: u64,
 ) -> PassEncoder {
     crate::launch_count::command_buffer();
+    context.note_activity();
     let command_buffer = context.queue().new_command_buffer().to_owned();
     command_buffer.set_label(label);
     command_buffer.encode_wait_for_event(&event.event, value);

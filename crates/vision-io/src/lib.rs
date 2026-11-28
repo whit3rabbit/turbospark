@@ -47,6 +47,7 @@ pub mod deepseek_vl2;
 pub mod error;
 pub mod gemma4;
 pub mod idefics3;
+pub mod inkling2;
 pub mod internvl;
 pub mod minicpm;
 pub mod mrope;
@@ -90,6 +91,12 @@ pub use gemma4::{
 pub use idefics3::{
     idefics3_expand_prompt, idefics3_longest_dims, idefics3_pixel_shuffle, idefics3_preprocess,
     idefics3_tile_dims, Idefics3Params, Idefics3Tiles,
+};
+pub use inkling2::{
+    inkling2_capped_dims, inkling2_composite_rgba, inkling2_decode_image_bytes,
+    inkling2_expand_image_placeholders, inkling2_preprocess, inkling2_tile_grid, Inkling2Patches,
+    INKLING2_CONTENT_IMAGE_ID, INKLING2_IMAGE_TOKEN_ID, INKLING2_MAX_TOKENS, INKLING2_MERGE,
+    INKLING2_PATCH, INKLING2_PATCH_DIM, INKLING2_TILE,
 };
 pub use internvl::{
     internvl_expand_image_placeholders, internvl_pixel_shuffle, internvl_preprocess,

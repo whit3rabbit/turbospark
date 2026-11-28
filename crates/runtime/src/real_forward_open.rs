@@ -411,6 +411,7 @@ impl RealForwardRunner {
             lfm3_vision: None,
             clip_vision: None,
             muse_vision: None,
+            inkling2_vision: None,
             pixtral_vision: None,
             siglip_vision: None,
             deepseek_ocr_vision: None,
@@ -622,6 +623,8 @@ impl RealForwardRunner {
                 // Map the resident buffers in the background (no wait): the
                 // first pass otherwise stalls 1 to 3 s on it.
                 runner.inkling2_prewarm()?;
+                // Opt-in: keep them mapped while idle (KERN-05 Step 3).
+                runner.inkling2_start_keep_warm()?;
             }
             // Its own flow: short-conv layers, zero-tail per-class rope and
             // sandwich norms are each inside the layer, and a neighbour's flow

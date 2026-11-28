@@ -190,6 +190,53 @@ fn decode_part(part: &WirePart, i: usize) -> Result<(String, Rgb8Image), String>
     }
 }
 
+/// [`decode_part`] for the Inkling 2 tower: the same three part forms, but
+/// decoded the way its processor sees them, with transparency composited onto
+/// the reference's checkerboard rather than dropped.
+fn decode_part_inkling2(part: &WirePart, i: usize) -> Result<(String, Rgb8Image), String> {
+    let (label, bytes) = match part.image_source()? {
+        ImageSource::Path(p) => (
+            p.to_string(),
+            std::fs::read(p).map_err(|e| format!("image {p}: {e}"))?,
+        ),
+        ImageSource::Base64(b) => {
+            let label = format!("image {}", i + 1);
+            let bytes = if b.starts_with("data:") {
+                turbospark_server::vision::decode_data_url(b)
+            } else {
+                turbospark_server::vision::base64_decode(b)
+            }
+            .map_err(|e| format!("{label}: {e}"))?;
+            (label, bytes)
+        }
+    };
+    let decoded = turbospark_vision_io::inkling2_decode_image_bytes(&bytes)
+        .map_err(|e| format!("{label}: {e}"))?;
+    Ok((label, decoded))
+}
+
+/// The Inkling 2 tower's whole turn (`docs/INKLING2_VISION_PHASE0.md`):
+/// decode every part and hand the runner the rendered prompt, which
+/// preprocesses, expands, encodes and injects. The same runner method the CLI
+/// and the server call.
+pub(crate) fn attach_inkling2(
+    runner: &mut runtime::RealForwardRunner,
+    rendered: &[i32],
+    parts: &[&WirePart],
+) -> Result<Vec<i32>, String> {
+    let mut decoded = Vec::with_capacity(parts.len());
+    for (i, part) in parts.iter().enumerate() {
+        decoded.push(decode_part_inkling2(part, i)?.1);
+    }
+    runner
+        .attach_inkling2_images(
+            rendered,
+            &decoded,
+            turbospark_vision_io::INKLING2_MAX_TOKENS,
+        )
+        .map_err(|e| format!("cannot attach the images: {e}"))
+}
+
 /// The MiniCPM-V tower's whole turn: decode every part and hand the runner
 /// the rendered prompt, which preprocesses, expands each rendered
 /// `<|image_pad|>` to its marker run with canvas positions, runs the tower and

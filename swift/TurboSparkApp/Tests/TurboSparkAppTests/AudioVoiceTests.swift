@@ -27,11 +27,12 @@ final class AudioVoiceTests: XCTestCase {
         controller.installedPaths = Dictionary(uniqueKeysWithValues: controller.profiles.map { ($0.identity.alias, "/test/\($0.identity.alias)") })
         controller.selectPage(.voiceClone)
         // The page lists one size per engine, in `curatedCloneAliases` order (#257):
-        // Qwen3-TTS 1.7B Base clones in Swift MLX; OmniVoice 8-bit, Drama 3 and
-        // MegaTTS3 clone natively on Metal, each with its own request shape. The
-        // other Qwen3 Base and OmniVoice sizes stay on Advanced and Voiceover.
+        // Qwen3-TTS 1.7B Base and Breeze clone in Swift MLX; OmniVoice 8-bit,
+        // Drama 3 and MegaTTS3 clone natively on Metal, each with its own
+        // request shape. The other Qwen3 Base and OmniVoice sizes stay on
+        // Advanced and Voiceover.
         XCTAssertEqual(controller.availableProfiles.map(\.identity.alias), [
-            "omnivoice-8bit", "qwen3-tts-12hz-17b-base-8bit", "fish-drama3-4bit", "megatts3-f32",
+            "omnivoice-8bit", "qwen3-tts-12hz-17b-base-8bit", "fish-drama3-4bit", "breeze-tts-2-mxfp4", "megatts3-f32",
         ])
         XCTAssertTrue(controller.availableProfiles.allSatisfy { AudioWorkspaceController.speechMode(for: $0) == .clone })
         let base = try XCTUnwrap(controller.availableProfiles.last { $0.family == "qwen3_tts" })
@@ -39,17 +40,18 @@ final class AudioVoiceTests: XCTestCase {
         controller.recipe.text = "A new take."
         XCTAssertNotNil(controller.speechValidationMessage)
         controller.selectPage(.voiceDesign)
-        XCTAssertEqual(controller.availableProfiles.count, 1)
+        // Qwen3 VoiceDesign and Breeze, which designs from the description.
+        XCTAssertEqual(controller.availableProfiles.map(\.family), ["qwen3_tts", "breeze_tts"])
         XCTAssertEqual(controller.speechSettings.mode, .design)
         controller.speechSettings.instruction = "Warm and calm"
         XCTAssertNil(controller.speechValidationMessage)
         controller.selectPage(.voiceover)
-        // Named-voice models, plus both OmniVoice rows and Drama 3, which
-        // speak without a reference here. MegaTTS3 cannot, and the Qwen3
+        // Named-voice models (Breeze's are its speakers S0 to S9), plus both
+        // OmniVoice rows and Drama 3, which speak without a reference here. MegaTTS3 cannot, and the Qwen3
         // Base and VoiceDesign rows belong to the other pages.
         XCTAssertEqual(Set(controller.availableProfiles.map(\.identity.alias)), [
             "kokoro-82m-bf16", "qwen3-tts-12hz-06b-customvoice-8bit", "qwen3-tts-12hz-17b-customvoice-8bit",
-            "omnivoice-8bit", "omnivoice-bf16", "fish-drama3-4bit",
+            "omnivoice-8bit", "omnivoice-bf16", "fish-drama3-4bit", "breeze-tts-2-mxfp4",
         ])
         XCTAssertTrue(controller.availableProfiles.allSatisfy {
             AudioWorkspaceController.speechMode(for: $0) == .customVoice

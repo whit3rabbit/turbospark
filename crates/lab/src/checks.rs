@@ -736,6 +736,42 @@ pub fn idle_penalty(rows: &Value) -> Option<f64> {
     })
 }
 
+/// The three largest state shares of one P-state window, e.g. `OFF 97%,
+/// P15 3%`, from the first channel (`GPUPH` on Apple Silicon).
+pub fn pstate_brief(window: &Value) -> String {
+    let Some(states) = window
+        .as_object()
+        .and_then(|w| w.values().next()?.as_object().cloned())
+    else {
+        return "unread".into();
+    };
+    let mut shares: Vec<(String, f64)> = states
+        .into_iter()
+        .filter_map(|(k, v)| Some((k, v.as_f64()?)))
+        .collect();
+    shares.sort_by(|a, b| b.1.total_cmp(&a.1));
+    shares
+        .iter()
+        .take(3)
+        .map(|(k, v)| format!("{k} {:.0}%", v * 100.0))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// `[12.3, 11.9]` as `12.3 11.9 ms`, or `unread`.
+pub fn ms_list(v: &Value) -> String {
+    match v.as_array() {
+        Some(a) if !a.is_empty() => {
+            let parts: Vec<String> = a
+                .iter()
+                .map(|x| x.as_f64().map_or("?".into(), |f| format!("{f:.1}")))
+                .collect();
+            format!("{} ms", parts.join(" "))
+        }
+        _ => "unread".into(),
+    }
+}
+
 /// A gap that costs the next token less than this is not worth chasing.
 pub const IDLE_PENALTY_FLOOR: f64 = 0.20;
 
@@ -766,6 +802,69 @@ pub fn idle_gap_cmd(mut args: Args) -> Result<CmdOutput, String> {
             r["first_submit_ms"].as_f64().unwrap_or(f64::NAN),
             r["busy_submit_median_ms"].as_f64().unwrap_or(f64::NAN)
         );
+        crate::say!(
+            "           first step waited {:.2} ms over {} buffers; busy head {}",
+            r["first_submit_total_ms"].as_f64().unwrap_or(f64::NAN),
+            r["first_submit_buffers"],
+            ms_list(&r["busy_head_ms"])
+        );
+        if r["prestep"].as_str().is_some_and(|p| p != "none") {
+            crate::say!(
+                "           prestep {} took {:.1} ms ({} pages)",
+                r["prestep"].as_str().unwrap_or("?"),
+                r["prestep_ms"].as_f64().unwrap_or(f64::NAN),
+                r["prestep_pages"]
+            );
+        }
+        let kw = &r["keepwarm"];
+        if kw.is_object() {
+            crate::say!(
+                "           keep-warm {} every {} ms: {} runs, {:.1} ms in all",
+                kw["action"].as_str().unwrap_or("?"),
+                kw["every_ms"],
+                kw["count"],
+                kw["spent_ms"].as_f64().unwrap_or(f64::NAN)
+            );
+        }
+        let rkw = &r["runner_keep_warm"];
+        if rkw.is_object() {
+            crate::say!(
+                "           runner keep-warm over the gap: {} fired, {} paused, {} failed",
+                rkw["fired"],
+                rkw["paused"],
+                rkw["failed"]
+            );
+        }
+        crate::say!(
+            "           gap energy {}; footprint {}; swap {:+.0} MiB, {} compressions over the row",
+            r["gap_energy"]["total_j"]
+                .as_f64()
+                .map_or("unread".into(), |j| format!("{j:.2} J")),
+            r["footprint_bytes"]
+                .as_f64()
+                .map_or("unread".into(), |b| format!(
+                    "{:.2} GiB",
+                    b / (1u64 << 30) as f64
+                )),
+            r["swap_growth_mib"].as_f64().unwrap_or(f64::NAN),
+            r["compressions_delta"]
+        );
+        let p = &r["pstate"];
+        if p.is_object() {
+            crate::say!(
+                "           gpu state: gap [{}], first step [{}], busy [{}]",
+                pstate_brief(&p["gap"]),
+                pstate_brief(&p["first_step"]),
+                pstate_brief(&p["busy"])
+            );
+        }
+    }
+    if let Some(reason) = rows
+        .as_array()
+        .and_then(|r| r.first())
+        .and_then(|r| r["pstate_error"].as_str())
+    {
+        crate::say!("  no GPU state readings: {reason}");
     }
     let penalty = idle_penalty(&rows);
     let worth = penalty.is_some_and(|p| p > IDLE_PENALTY_FLOOR);
@@ -1222,5 +1321,100 @@ mod tests {
         assert_eq!(declared_reason(&d, "gemma4"), None);
         // An empty reason declares nothing.
         assert_eq!(declared_reason(&d, "lfm3"), None);
+    }
+}
+
+#[cfg(test)]
+mod idle_arm_tests {
+    use super::{ms_list, pstate_brief};
+    use crate::worker::{IdlePrestep, KeepWarm};
+    use runtime::IdleProbeAction;
+    use serde_json::json;
+
+    #[test]
+    fn prestep_parses_every_arm_and_refuses_others() {
+        assert_eq!(IdlePrestep::parse(None), Ok(IdlePrestep::None));
+        assert_eq!(IdlePrestep::parse(Some("")), Ok(IdlePrestep::None));
+        assert_eq!(IdlePrestep::parse(Some("wake")), Ok(IdlePrestep::Wake));
+        assert_eq!(IdlePrestep::parse(Some("touch")), Ok(IdlePrestep::Touch));
+        assert_eq!(
+            IdlePrestep::parse(Some("prewarm")),
+            Ok(IdlePrestep::Prewarm)
+        );
+        assert_eq!(
+            IdlePrestep::parse(Some("touch-all")),
+            Ok(IdlePrestep::TouchAll)
+        );
+        assert!(IdlePrestep::parse(Some("Touch")).is_err());
+        assert!(IdlePrestep::parse(Some("touch_all")).is_err());
+    }
+
+    #[test]
+    fn each_prestep_maps_to_its_own_runner_action() {
+        // A swapped arm would measure one buffer set under another's name.
+        assert_eq!(IdlePrestep::None.action(), None);
+        assert_eq!(IdlePrestep::Wake.action(), Some(IdleProbeAction::Wake));
+        assert_eq!(
+            IdlePrestep::Touch.action(),
+            Some(IdleProbeAction::TouchWeights)
+        );
+        assert_eq!(
+            IdlePrestep::Prewarm.action(),
+            Some(IdleProbeAction::Prewarm)
+        );
+        assert_eq!(
+            IdlePrestep::TouchAll.action(),
+            Some(IdleProbeAction::TouchAll)
+        );
+    }
+
+    #[test]
+    fn keepwarm_needs_both_variables_a_bounded_period_and_a_real_action() {
+        assert_eq!(KeepWarm::parse(None, None), Ok(None));
+        assert_eq!(
+            KeepWarm::parse(Some("250"), Some("prewarm")),
+            Ok(Some(KeepWarm {
+                every_ms: 250,
+                action: IdlePrestep::Prewarm
+            }))
+        );
+        assert!(KeepWarm::parse(Some("250"), None).is_err());
+        assert!(KeepWarm::parse(None, Some("wake")).is_err());
+        assert!(KeepWarm::parse(Some("49"), Some("wake")).is_err());
+        assert!(KeepWarm::parse(Some("5001"), Some("wake")).is_err());
+        assert!(KeepWarm::parse(Some("50"), Some("wake")).is_ok());
+        assert!(KeepWarm::parse(Some("5000"), Some("wake")).is_ok());
+        assert!(KeepWarm::parse(Some("2.5e2"), Some("wake")).is_err());
+        assert!(KeepWarm::parse(Some("250"), Some("none")).is_err());
+        assert!(KeepWarm::parse(Some("250"), Some("")).is_err());
+    }
+
+    #[test]
+    fn keepwarm_ticks_fall_strictly_inside_the_gap() {
+        let kw = |ms| KeepWarm {
+            every_ms: ms,
+            action: IdlePrestep::Wake,
+        };
+        // 2 s at 250 ms: 250..1750, never at 2.0, so the gap ends in idle.
+        let t = kw(250).ticks(2.0);
+        assert_eq!(t.len(), 7);
+        assert!((t[0] - 0.25).abs() < 1e-12 && (t[6] - 1.75).abs() < 1e-12);
+        assert_eq!(kw(750).ticks(2.0).len(), 2);
+        assert!(kw(750).ticks(0.5).is_empty());
+        assert!(kw(1000).ticks(1.0).is_empty());
+    }
+
+    #[test]
+    fn ms_list_prints_a_row_or_unread() {
+        assert_eq!(ms_list(&json!([12.34, 11.96])), "12.3 12.0 ms");
+        assert_eq!(ms_list(&json!([])), "unread");
+        assert_eq!(ms_list(&serde_json::Value::Null), "unread");
+    }
+
+    #[test]
+    fn pstate_brief_lists_the_largest_three_shares() {
+        let w = json!({"GPUPH": {"OFF": 0.5, "P1": 0.1, "P15": 0.3, "P2": 0.05, "P3": 0.05}});
+        assert_eq!(pstate_brief(&w), "OFF 50%, P15 30%, P1 10%");
+        assert_eq!(pstate_brief(&serde_json::Value::Null), "unread");
     }
 }

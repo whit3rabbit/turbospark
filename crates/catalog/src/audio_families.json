@@ -284,6 +284,19 @@
     "evidence": "crates/runtime/tests/coreml_parakeet_unified.rs (macOS 15+ only, English, live streaming through ts_audio_stream_*); historical evidence only, not rerun by capability discovery"
   },
   {
+    "family": "stt/fluid_speech_pro",
+    "task": "speech_to_text",
+    "operations": [
+      "transcribe"
+    ],
+    "backend": "portable_cpu",
+    "can_run": true,
+    "component": false,
+    "unavailable_reason": null,
+    "source": "crates/runtime/src/fluid_speech.rs",
+    "evidence": "crates/audio/src/stt/parakeet/README.md (fluid_parity fixtures, verbatim and clean); historical evidence only, not rerun by capability discovery"
+  },
+  {
     "family": "stt/phonon",
     "task": "speech_to_text",
     "operations": [
@@ -488,6 +501,19 @@
     "unavailable_reason": null,
     "source": "crates/audio/src/music/minimax_music3/mod.rs",
     "evidence": "crates/audio/src/music/minimax_music3/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "music/ace_step15",
+    "task": "music",
+    "operations": [
+      "text2music"
+    ],
+    "backend": "metal",
+    "can_run": true,
+    "component": false,
+    "unavailable_reason": null,
+    "source": "crates/audio/src/music/ace_step15/mod.rs",
+    "evidence": "crates/audio/src/music/ace_step15/README.md; parity and session gates in that README, not rerun by capability discovery"
   },
   {
     "family": "sts/deepfilternet",

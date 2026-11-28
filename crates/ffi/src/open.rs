@@ -819,6 +819,20 @@ fn vision_info(
             },
         };
     }
+    // The Inkling 2 tower never resizes below its cap: an image is padded to
+    // 40 px tiles, one token each, and only an image past 4,096 tiles is
+    // downscaled. The ceiling reported is the cap's area.
+    if runner.inkling2_image_ids().is_some() {
+        let tile = turbospark_vision_io::INKLING2_TILE;
+        return crate::wire::VisionInfo {
+            active: true,
+            image_token_id: Some(image_token_id),
+            reason: None,
+            source,
+            sidecar_path,
+            max_pixels: Some(turbospark_vision_io::INKLING2_MAX_TOKENS * tile * tile),
+        };
+    }
     // The Idefics3 / SmolVLM processor sizes every image off its own config
     // (longest edge, then whole tiles), so there is no pixel budget to clamp.
     if runner.idefics3_image_ids().is_some() {

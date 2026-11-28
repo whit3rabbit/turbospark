@@ -940,7 +940,7 @@ impl MiniCpmVisionTower {
             .map_err(e)?;
             gpu::encode_vision_residual_add(context, &pass, (&s.x, 0), (&s.pos, 0), wide as u32)
                 .map_err(e)?;
-            pass.commit_and_wait();
+            pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
             if let Some(c) = capture.as_deref_mut() {
                 c.patch_embed = read_bits(&s.x, wide);
             }
@@ -961,7 +961,7 @@ impl MiniCpmVisionTower {
                     encode_vit_merger(context, &pass, weights, &resident.vit, &mut s, &d, rows)?;
                     rows /= 4;
                 }
-                pass.commit_and_wait();
+                pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
                 if let Some(c) = capture.as_deref_mut() {
                     if n == 0 {
                         c.block_0 = read_bits(&s.x, rows * d.hidden);
@@ -1035,7 +1035,7 @@ impl MiniCpmVisionTower {
                 d.out_hidden as u32,
             )
             .map_err(e)?;
-            pass.commit_and_wait();
+            pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
 
             Ok(VisionEmbedding {
                 rows: read_bits(&s.out, groups * d.out_hidden),

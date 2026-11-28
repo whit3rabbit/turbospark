@@ -1,0 +1,33 @@
+{
+  "generator": "tools/gen_ace_step15_dit_fixtures.py",
+  "reference": "ACE-Step/Ace-Step1.5@19671f406d603126926c1b7e2adc169acbcade22 acestep-v15-turbo modeling code",
+  "torch_version": "2.15.0",
+  "transformers_version": "4.57.6",
+  "attn_implementation": "sdpa",
+  "t_step": 0.75,
+  "seed": 1234,
+  "cover_strength": 0.5,
+  "vector_quantize_pytorch_version": "1.27.20",
+  "files": {
+    "tiny_config.json": "8aa1002bdd818fae5d73d3e30508b07b94ce0ba95b235bfc51c8234937594d2e",
+    "tiny_weights.safetensors": "47ca3a15047f311b2c38f5db68089fe2f77d740a6cb3c770d01eed20d91d8660",
+    "text.npy": "3f528af0a5d2f763784392bb750a5f73d6d06571dea4a77fb3b60fcf9e3fd4c6",
+    "lyric.npy": "8eec92964238c8fa82f81139e808a5c117d0b7b9d36d4eb688ffd7dedbddc16f",
+    "refer.npy": "45dccc1e5c5a27419b84ceac594c947da60184b43b408604b9f740f36122d36f",
+    "x.npy": "a90894889fb504a232abdb04a3e4ef910d1eb1d67cd275483f0c442ed90a4570",
+    "context.npy": "a79ffad4fa880b5c6af8d50d9824126eb75fa4c77211012fa1f49863376cbf4f",
+    "src.npy": "201165dd6ab8a417ee4730e85af2d75b16364bf56288feed60390468c4b381e3",
+    "chunk.npy": "71954364a1c80dc52fa3d6f739374af7eab111da52d471164dd894a80e12ee8f",
+    "silence.npy": "2c0aa37184dff8786dea9ba21f30087ad37428465b455e8e5df87682b92d4b2c",
+    "text_nc.npy": "7860a09f0078c5c8cf8ada8793d7d7005d46edfd97d9e3de3229db3517467787",
+    "encoder.npy": "6d6f9e68031ec46974b627e667fffebb2be9a2bd4a3dbc5bf703ea884e365749",
+    "velocity.npy": "fee5133660454afaca87e354efc801e5f06c0fab3849affe750cc24420368fc7",
+    "noise.npy": "b6bffa75030d65f69e492bb31470679fae753b2fa2ab8a4446c3623434572d83",
+    "latents.npy": "0b5b58ed6338928a34fbcec6eb5c9b47e8c59f2a06f69bcf0890c4a59029d164",
+    "tokens.npy": "ae9d67279c3ebcf9f76b5e0a5326e430d56d59ccdc39560946eff5ac1fa279a9",
+    "indices.npy": "fd4a9b9a88d2702fdd606baa505121c3cd4b5c6bb7916a81a9e94a091a31c24b",
+    "hints.npy": "cba144c5ee76cd6160256787d9d5f6d6fa58774e8e500c87070005823a4a1d7a",
+    "encoder_nc.npy": "0d9b0b9e960c943a0d8104ca9f2bac7e5cd6df3e61020c73fa0a8580cc3bf673",
+    "latents_cover.npy": "f64ff5542ecc30b9996612372eb7529b29bdca3c62414f980b08fbe90777e60a"
+  }
+}

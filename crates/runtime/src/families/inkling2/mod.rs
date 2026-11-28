@@ -399,9 +399,19 @@ impl RealForwardRunner {
             pack: None,
         };
         let mut pass = c.context.begin_pass_labeled("inkling2 attn+router");
-        // BF16, MLX affine 4/8-bit on an MLX-sourced install, or a LAMQ
-        // bucket row.
-        if let Some(l) = c.lamq.clone() {
+        // An image position takes the tower's FP16 row as the post-norm
+        // hidden state: `embed_norm` is a TEXT-only op (the reference scatters
+        // image rows after `Inkling2NormedEmbedding`), so the row skips both
+        // the lookup and the norm. The previous token's pass was waited, and
+        // nothing earlier in this pass touches `cur`, so the host write is
+        // what the first dispatch below reads.
+        let image_row = self
+            .prompt_vision
+            .as_ref()
+            .and_then(|pv| pv.row_for(position));
+        if let Some(row) = image_row {
+            gpu::write_buffer_bytes(&st.cur, 0, row);
+        } else if let Some(l) = c.lamq.clone() {
             l.embed(
                 c.context,
                 &pass,
@@ -423,12 +433,14 @@ impl RealForwardRunner {
                 1.0,
             )?;
         }
-        c.norm(
-            &pass,
-            (&st.y, 0),
-            "model.llm.embed_norm.weight",
-            (&st.cur, 0),
-        )?;
+        if image_row.is_none() {
+            c.norm(
+                &pass,
+                (&st.y, 0),
+                "model.llm.embed_norm.weight",
+                (&st.cur, 0),
+            )?;
+        }
 
         let (core_start, core_end, layers) = (
             cfg.core_start as usize,
@@ -459,7 +471,8 @@ impl RealForwardRunner {
             } else {
                 let committed =
                     std::mem::replace(pass, c.context.begin_pass_labeled("inkling2 routed"))
-                        .commit();
+                        .commit_checked()
+                        .map_err(RealForwardError::Gpu)?;
                 let t1 = std::time::Instant::now();
                 tr.gpu_ms += committed.wait_with_gpu_time() * 1e3;
                 let t2 = std::time::Instant::now();
@@ -669,7 +682,11 @@ impl RealForwardRunner {
                 output_head(&mut c, &pass, st, &arch, n_blocks, (&out, 0))?;
             }
         }
-        tr.gpu_ms += pass.commit_and_wait_with_gpu_time() * 1e3;
+        tr.gpu_ms += pass
+            .commit_checked()
+            .map_err(RealForwardError::Gpu)?
+            .wait_with_gpu_time()
+            * 1e3;
         if trace {
             tr.report(position, t_token.elapsed().as_secs_f64() * 1e3);
         }

@@ -37,8 +37,9 @@ extension AudioWorkspaceController {
     }
     /// The native cloners whose runtime also speaks with no reference, in a
     /// voice the model picks (`fish_drama3_request`, `omnivoice_request`).
-    /// MegaTTS3 cannot, so it stays off Voiceover.
-    nonisolated static let referenceFreeSpeechFamilies: Set<String> = ["omnivoice", "fish_drama3"]
+    /// MegaTTS3 cannot, so it stays off Voiceover. Breeze speaks with a
+    /// preset speaker (`S0`..`S9`, the profile's voices).
+    nonisolated static let referenceFreeSpeechFamilies: Set<String> = ["omnivoice", "fish_drama3", "breeze_tts"]
     /// Whether a run clones from a reference. A native cloner that can speak
     /// without one clones only in clone mode, which `normalizeModelOptions`
     /// sets on every page but Voiceover. Any other native cloner always does.
@@ -55,10 +56,18 @@ extension AudioWorkspaceController {
         Self.clonesNatively(selectedProfile) && !selectedProfileClonesNatively
     }
     /// The native families whose request shape `nativeCloneRequest` builds.
-    nonisolated static let nativeCloneRequestFamilies: Set<String> = ["megatts3", "omnivoice", "fish_drama3"]
-    /// Drama 3 clones only from the reference's exact words, and has no
-    /// speed, steps or guidance weights.
-    var selectedProfileNeedsReferenceTranscript: Bool { selectedProfile?.family == "fish_drama3" }
+    nonisolated static let nativeCloneRequestFamilies: Set<String> = ["megatts3", "omnivoice", "fish_drama3", "breeze_tts"]
+    /// Drama 3 and Breeze clone only from the reference's exact words, and
+    /// have no speed, steps or guidance weights.
+    var selectedProfileNeedsReferenceTranscript: Bool {
+        selectedProfile?.family == "fish_drama3" || selectedProfile?.family == "breeze_tts"
+    }
+    /// Breeze takes a voice instruction: it designs the voice on Voice Design
+    /// and directs the cloned voice on Voice Cloning. Voiceover speaks with
+    /// the preset speaker alone.
+    var selectedProfileTakesInstruction: Bool {
+        selectedProfile?.family == "breeze_tts" && (page == .voiceDesign || page == .voiceClone)
+    }
     func speechProfileMatchesPage(_ profile: AudioProfile) -> Bool {
         // A streaming-only model (Parakeet Unified) serves live text, not a
         // batch transcription job, which would refuse to open it.
@@ -75,7 +84,9 @@ extension AudioWorkspaceController {
                 if !hasMetalOrMLX { return false }
             }
             return (profile.family == "qwen3_tts" || Self.clonesNatively(profile)) && Self.speechMode(for: profile) == .clone
-        case .voiceDesign: return profile.family == "qwen3_tts" && Self.speechMode(for: profile) == .design
+        case .voiceDesign:
+            if profile.family == "breeze_tts" { return true }
+            return profile.family == "qwen3_tts" && Self.speechMode(for: profile) == .design
         case .voiceover:
             if Self.clonesNatively(profile) { return Self.referenceFreeSpeechFamilies.contains(profile.family) }
             return Self.speechMode(for: profile) == .customVoice
@@ -107,8 +118,14 @@ extension AudioWorkspaceController {
     var speechValidationMessage: String? {
         if selectedProfileClonesNatively { return nativeCloneValidationMessage }
         if selectedProfileSpeaksWithoutReference {
-            return recipe.text.count > Self.speechTextCharacterLimit
-                ? AppStrings.localized("Split speech text longer than 6,000 characters into sections.") : nil
+            if recipe.text.count > Self.speechTextCharacterLimit {
+                return AppStrings.localized("Split speech text longer than 6,000 characters into sections.")
+            }
+            if selectedProfile?.family == "breeze_tts", speechSettings.mode == .design,
+               speechSettings.instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return AppStrings.localized("Describe the voice before generating speech.")
+            }
+            return nil
         }
         guard selectedProfile?.family == "qwen3_tts" else { return nil }
         if recipe.text.count > Self.speechTextCharacterLimit { return AppStrings.localized("Split speech text longer than 6,000 characters into sections.") }

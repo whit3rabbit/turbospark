@@ -816,7 +816,7 @@ impl Qwen25VisionTower {
                 d.hidden as u32,
             )
             .map_err(e)?;
-            pass.commit_and_wait();
+            pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
             if let Some(c) = capture.as_mut() {
                 c.patch_embed = read_bits(&s.x, wide);
             }
@@ -833,7 +833,7 @@ impl Qwen25VisionTower {
                 };
                 let pass = context.begin_pass();
                 encode_block(context, &pass, &binding, &s, &d, n)?;
-                pass.commit_and_wait();
+                pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
                 if let Some(c) = capture.as_mut() {
                     if n == 0 {
                         c.block_first = read_bits(&s.x, wide);
@@ -892,7 +892,7 @@ impl Qwen25VisionTower {
                 d.out_hidden as u32,
             )
             .map_err(e)?;
-            pass.commit_and_wait();
+            pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
 
             // Put the merged rows back on the page's own order.
             let in_window_order = read_bits(&s.out, merged * d.out_hidden);

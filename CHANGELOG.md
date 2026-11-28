@@ -14,6 +14,39 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- Vision for Inkling 2 Mini: an `inkling2-mini-vision-tower` sidecar
+  (`turbospark-model pull-vision`, about 636 MB range-read from the HF
+  original) that pairs with every Inkling 2 Mini install, through the CLI, the
+  server and the C ABI. Image turns decode without a speculative drafter. The
+  macOS app does not attach vision sidecars yet. See
+  `docs/INKLING2_VISION_PHASE0.md`.
+- Audio: Breeze TTS 2 (`breeze-tts-2-mxfp4`, mlx-community 4-bit) in the app
+  through Swift MLX, on Voice Cloning (clone and voice direction), Voice Design,
+  and Text-to-Speech with speakers S0 to S9. Non-commercial license, accepted
+  before download. See `docs/BREEZE_TTS.md`.
+- Fluid Speech Pro speech-to-text (FluidVoice, CC-BY-4.0, a Parakeet Ultra
+  fine-tune with an extra FrameCleaner block). CPU port in
+  `audio::stt::parakeet` for the pinned MLX export (fp32 or 8-bit) with
+  verbatim and clean styles (`TranscriptStyle`, `--clean` in the
+  `parakeet_transcribe` example), and a `fluid-speech-pro-coreml` audio
+  catalog row run by the Rust Core ML Parakeet runner on the Neural Engine
+  (verbatim only; the export has no clean mode). A second row,
+  `fluid-speech-pro-mlx-8bit` (family `fluid_speech_pro`), runs the CPU port
+  in the native audio session in 15 s windows and takes a new request field,
+  `transcript_style` (`verbatim` or `clean`; other models refuse it). The app
+  lists both under Final Transcript (Core ML after Parakeet Ultra, CPU after
+  Redux) and shows a "Remove fillers and repeats" switch when the CPU row is
+  the final model; it applies to the Transcribe page and the Record page's
+  final pass. CPU-declared rows now open on the CPU from the Record page too.
+  The Glade (Core AI) bundle is not supported: it needs macOS 27.
+- Music: ACE-Step 1.5 Turbo text2music (`ace-step15-turbo`, 48 kHz stereo,
+  Metal): a native port of the Oobleck VAE, Qwen3-Embedding text encoder,
+  condition encoder, 24-layer flow-matching DiT, FSQ cover tokenizer and
+  upstream's DCW sampler correction, gated against the upstream PyTorch
+  reference on the real checkpoint. Served by audio music sessions, the
+  catalog (`turbospark-model pull-audio ace-step15-turbo`) and
+  `turbospark-music generate`; the silence latent is read from the pinned
+  `silence_latent.pt` without unpickling.
 - MiniCPM-V 4.6 image input intake (`minicpmv4_6`, dense Qwen3.5 trunk, new
   `minicpm_v46` tower kind with sequential positions), combined installs from
   MLX-quantized conversions only. Smoked once on the 4-bit build. See
@@ -34,6 +67,17 @@ when this file gets updated relative to the version bump and the tag.
   profile (text and image, 471 MB against 1.48 GB), status `runs`. The Core ML
   host now reads int8 token tables with per-row fp16 scales and opens installs
   without an audio tower. See `docs/COREML.md`.
+- tslab: `idle-gap` cause arms (`TURBOSPARK_LAB_IDLE_PRESTEP=wake|touch|prewarm|touch-all`)
+  and keep-warm arms (`TURBOSPARK_LAB_IDLE_KEEPWARM_MS`,
+  `TURBOSPARK_LAB_IDLE_KEEPWARM`) with GPU power-state, energy and memory
+  readings, and `kernel --bench gdn_delta --oracle on`, which
+  checks the GDN delta kernels against an FP64 reference.
+- Inkling 2: an opt-in bounded keep-warm for resident installs
+  (`TURBOSPARK_INKLING2_KEEPWARM_MS=<50..5000>`, window
+  `TURBOSPARK_INKLING2_KEEPWARM_WINDOW_S`, default 120 s). Off by default.
+  While the runner is idle it names the resident buffers so macOS keeps them
+  mapped, which removes most of the first-pass stall after 1 to 2 s idle; it
+  stops after the window and pauses under memory pressure.
 
 ### Performance
 - Qwen2 and Qwen2.5 prompt processing multiplies each projection once per
@@ -47,6 +91,23 @@ when this file gets updated relative to the version bump and the tag.
   large vocabularies and long contexts, with the same results.
 
 ### Changed
+- macOS app sidebar: visible groups (Chat, Humanize, API, Models, then Image
+  Generation and Audio, then Files) replace the "More" menu. "Installed" is now
+  "Models", with Discover inside it. Rows can be pinned, reordered and hidden,
+  and the layout can be reset.
+- macOS app Models workspace: an Installed | Discover switcher, search first in
+  both filter bars, one Filter button in place of the row of menus, shorter
+  rows, and Select mode with one confirmed bulk delete. Delete is also on row
+  hover, the context menu and the detail pane.
+- GGUF Q4_K tensors decode and verify through new wide-load kernels by default:
+  1.5x to 1.9x the previous kernel's bandwidth on real Q4_K bytes, and 1.4x to
+  2.4x for speculative verify. Output moves within a mean KL of about 1e-5 nats
+  (Qwen3 8B Q4_K_M), so it is not bit-identical to the previous kernel.
+  `TURBOSPARK_GGUF_KERNEL=current` restores it.
+- GGUF Q8_0 tensors also decode and verify through wide-load kernels by
+  default: Qwen3 8B Q8_0 decodes about 1.4x to 1.5x faster, with a mean KL of
+  about 1.5e-5 nats and the same greedy tokens. `TURBOSPARK_GGUF_KERNEL=current`
+  restores the previous Q4_K and Q8_0 kernels together.
 - `/v1/chat/completions` now answers 400 to `n` greater than 1 and to a
   `json_schema` response format with `strict: true`. Both were accepted before
   with only the `x-anyllm-degradation` header, so a client got one choice, or
@@ -59,8 +120,19 @@ when this file gets updated relative to the version bump and the tag.
 - A tslab spec's arms may differ only in `knob_env` unless declared in
   `also_changes`, and a decoding workload is now gated on its decode path too.
 - The app's `dflash` drafter choice is now labelled "Block Drafter".
+- A GPU dispatch that asks for more threads per threadgroup than the device
+  allows now fails the generation with an error naming the kernel, instead of
+  panicking the process. Device-fault handling is unchanged.
 
 ### Fixed
+- macOS app: Rewind's destructive button is no longer the default action, so
+  Return cannot drop conversation history.
+- macOS app UI audit: small controls have a 20 pt minimum hit target, toasts
+  wrap instead of truncating, dense models no longer show an MoE badge, and
+  Settings and Discover rows adapt to large text.
+- Qwen3-TTS streaming decode no longer adds the codec's transposed-conv
+  bias twice at every chunk boundary (mlx-audio PR 1003), so streamed speech
+  matches a one-call decode.
 - Inkling 2 tool requests failed to render (`tojson` arguments the template
   engine refused).
 

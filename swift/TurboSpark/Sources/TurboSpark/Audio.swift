@@ -353,6 +353,9 @@ public struct AudioRequest: Codable, Sendable, Equatable {
     public var inputChannels: UInt8?
     /// The user confirmed the right to use the reference voice. Required to clone.
     public var consent = false
+    /// Fluid Speech Pro on the CPU only: "verbatim" (nil) or "clean", which
+    /// drops fillers and repeated words. Other models refuse it.
+    public var transcriptStyle: String?
 
     public init(task: AudioTask, language: String? = nil) {
         self.task = task

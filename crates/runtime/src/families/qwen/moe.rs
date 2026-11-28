@@ -141,7 +141,12 @@ pub(crate) fn encode_qwen_layer_moe(
             use_silu,
         )?;
         phases.qwen_shared_submissions += 1;
-        Some(shared_pass.commit().waiting_on_drop())
+        Some(
+            shared_pass
+                .commit_checked()
+                .map_err(RealForwardError::Gpu)?
+                .waiting_on_drop(),
+        )
     } else {
         None
     };

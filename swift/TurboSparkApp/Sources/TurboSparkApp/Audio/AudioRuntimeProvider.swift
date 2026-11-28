@@ -8,6 +8,8 @@ enum AudioRuntimeProvider: Equatable, Sendable {
     case rust
     /// Qwen3-TTS through the vendored Swift MLX provider.
     case qwenMLX
+    /// Breeze TTS 2 through the same vendored package (`BreezeTTSModel`).
+    case breezeMLX
     /// FluidAudio (Core ML) inside the app.
     case fluidAudio(FluidAudioFamily)
     /// The macOS built-in recognizer (`AppleSpeech`). It has no download and
@@ -20,7 +22,11 @@ enum AudioRuntimeProvider: Equatable, Sendable {
     init(_ profile: AudioProfile) {
         switch profile.capabilities.backend {
         case "swift_mlx":
-            self = profile.family == "qwen3_tts" ? .qwenMLX : .unsupported
+            switch profile.family {
+            case "qwen3_tts": self = .qwenMLX
+            case "breeze_tts": self = .breezeMLX
+            default: self = .unsupported
+            }
         case "swift_coreml":
             // The task gate keeps a row whose job is not wired out of every
             // picker, so it cannot reach the run-time refusal in `beginRun`.
@@ -43,7 +49,7 @@ enum AudioRuntimeProvider: Equatable, Sendable {
     func canRun(_ profile: AudioProfile) -> Bool {
         switch self {
         case .rust: return profile.capabilities.canRun
-        case .qwenMLX: return true
+        case .qwenMLX, .breezeMLX: return true
         case .fluidAudio(let family): return family.isSupportedOnThisMac
         case .appleSpeech: return AppleSpeech.isSupportedOnThisMac
         case .unsupported: return false
@@ -57,7 +63,7 @@ enum AudioRuntimeProvider: Equatable, Sendable {
     var acceptsLocalFolder: Bool {
         switch self {
         case .fluidAudio, .appleSpeech: return false
-        case .rust, .qwenMLX, .unsupported: return true
+        case .rust, .qwenMLX, .breezeMLX, .unsupported: return true
         }
     }
 }

@@ -1520,9 +1520,9 @@ fn run_micro_batch(
     let mut rows_done = Vec::with_capacity(n);
     let mut rows_iter = rows.into_iter();
     for seg in segs {
-        seg_done.push(seg.commit());
+        seg_done.push(seg.commit_checked().map_err(RealForwardError::Gpu)?);
         if let Some(r) = rows_iter.next() {
-            rows_done.push(r.commit());
+            rows_done.push(r.commit_checked().map_err(RealForwardError::Gpu)?);
         }
     }
 

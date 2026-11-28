@@ -7,6 +7,7 @@ Greedy TDT (token-and-duration transducer) speech recognition on the NeMo FastCo
 - `ParakeetProfile`, `PARAKEET_TDT_V2`, `PARAKEET_TDT_V3`, `PARAKEET_REDUX`: pinned repo and 40-char revision [mod.rs:ParakeetProfile]
 - `ParakeetConfig` with `from_json` and public geometry fields [mod.rs:ParakeetConfig]
 - `ParakeetTdt` with `open`, `config`, `transcribe`, `decode` returning `AlignedResult` [mod.rs:ParakeetTdt]
+- `PARAKEET_FLUID_SPEECH_PRO`, `TranscriptStyle`, `ParakeetTdt::open_with_style`, `FluidSpeechConfig` [mod.rs:ParakeetTdt::open_with_style] [fluid.rs:FluidSpeechConfig]
 - `is_special_piece` (public so the Core ML host filters the same set) [mod.rs:is_special_piece]
 - `adjust_sentencepiece_digit_spacing` [mod.rs:adjust_sentencepiece_digit_spacing]
 - Parent-module-only (`pub(super)`) Redux hooks `normalized_config`, `convert_checkpoint` [redux.rs:normalized_config] [redux.rs:convert_checkpoint]
@@ -17,6 +18,10 @@ Greedy TDT (token-and-duration transducer) speech recognition on the NeMo FastCo
 - Joint/decoder dims must agree, durations are strictly increasing and start at 0, activation is relu [mod.rs:ParakeetConfig::parse]
 - Blank id equals `vocab_size`, embedding has `vocab_size + 1` rows and the joint output has `vocab_size + 1 + num_extra_outputs` rows [mod.rs:TdtDecoder::load]
 - Tensor shapes are checked before loading [mod.rs:load_checked]
+- A `fluid_speech` config block always opens the Fluid path; insert must be `pre`, width the encoder width, kernel 15 [fluid.rs:FluidSpeechConfig::parse]
+- Fluid mel uses valid-frame statistics and a zeroed padded frame; the encoder masks subsampling, runs FrameCleaner on every subsampled frame, then keeps `subsample(samples / hop)` frames [mod.rs:ParakeetTdt::encoder_features]
+- The 8-bit Fluid file must be MLX 8-bit group 64 by shape; quantized tensors in a plain checkpoint are refused [mod.rs:check_fluid_quant_scheme]
+- Clean style needs a Fluid checkpoint; every adapter module must fold into a loaded weight [mod.rs:ParakeetTdt::open_with_style] [fluid.rs:CleanAdapter::check_all_used]
 - `decode` rejects mismatched sample rate, empty, or non-finite input [mod.rs:ParakeetTdt::decode]
 - Standard loop forces progress after `max_symbols` consecutive zero-duration steps, Redux mode bounds iterations to `max_symbols * frame_count` and clamps blank duration to at least 1 [mod.rs:ParakeetTdt::greedy_decode]
 - The predictor proposal is cached and committed only when a non-blank token is emitted [mod.rs:TdtDecoder::logits]
@@ -26,7 +31,7 @@ Greedy TDT (token-and-duration transducer) speech recognition on the NeMo FastCo
 - The temp file is created with `create_new` and removed on success and failure after load [mod.rs:ParakeetTdt::open] [redux.rs:write_safetensors]
 
 ## Side Effects
-- Reads `config.json`, `model.safetensors`, and for Redux `tokenizer.json`, `ternary.json` [mod.rs:ParakeetTdt::open] [redux.rs:convert_checkpoint]
+- Reads `config.json`, `model.safetensors`, and for Redux `tokenizer.json`, `ternary.json`; Fluid may read `model.8bit.safetensors` and `clean-mode.safetensors` instead [mod.rs:ParakeetTdt::open] [redux.rs:convert_checkpoint] [mod.rs:ParakeetTdt::open_fluid]
 - Redux writes a full F32 safetensors file in `std::env::temp_dir()` named by pid and nanosecond nonce, then deletes it [redux.rs:temporary_path] [mod.rs:ParakeetTdt::open]
 - Memory-maps the checkpoint via `SafetensorsFile::open` [mod.rs:ParakeetTdt::open_with_config]
 - CPU-only, no GPU, threads, env vars, or global statics (the TURBOSPEECH_PARAKEET_MODEL env var is read only in tests) [mod.rs:tests::model_dir]

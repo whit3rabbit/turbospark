@@ -26,6 +26,7 @@ final class AudioDiscoverCatalogTests: XCTestCase {
         [
             profile("parakeet-unified-en-coreml", family: "parakeet_unified", operations: ["stream_transcribe"]),
             profile("parakeet-ultra-coreml", operations: ["transcribe"], downloadBytes: 300),
+            profile("fluid-speech-pro-coreml", operations: ["transcribe"], downloadBytes: 250),
             profile("parakeet-redux-coreml", operations: ["transcribe"], downloadBytes: 200),
             profile("speaker-diarization-coreml", task: .diarization, family: "pyannote_community1", operations: ["diarize"]),
             profile(AudioWorkspaceController.defaultMusicProfileAlias, task: .music, family: "minimax_music3",
@@ -41,6 +42,7 @@ final class AudioDiscoverCatalogTests: XCTestCase {
         XCTAssertEqual(entries.map(\.id), [
             "parakeet-unified-en-coreml",
             "parakeet-ultra-coreml",
+            "fluid-speech-pro-coreml",
             "parakeet-redux-coreml",
             "speaker-diarization-coreml",
             AudioWorkspaceController.defaultMusicProfileAlias,
@@ -48,7 +50,7 @@ final class AudioDiscoverCatalogTests: XCTestCase {
         XCTAssertEqual(AudioDiscoverCatalog.grouped(entries).map(\.group), [.liveText, .finalTranscript, .speakers, .music])
         XCTAssertEqual(AudioDiscoverCatalog.grouped(entries).map { $0.entries.map(\.id) }, [
             ["parakeet-unified-en-coreml"],
-            ["parakeet-ultra-coreml", "parakeet-redux-coreml"],
+            ["parakeet-ultra-coreml", "fluid-speech-pro-coreml", "parakeet-redux-coreml"],
             ["speaker-diarization-coreml"],
             [AudioWorkspaceController.defaultMusicProfileAlias],
         ])
@@ -91,6 +93,7 @@ final class AudioDiscoverCatalogTests: XCTestCase {
             "parakeet-unified-en-coreml",
             "speaker-diarization-coreml",
             "parakeet-redux-coreml",
+            "fluid-speech-pro-coreml",
             "parakeet-ultra-coreml",
             AudioWorkspaceController.defaultMusicProfileAlias,
         ])

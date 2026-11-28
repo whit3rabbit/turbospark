@@ -1508,9 +1508,22 @@ pub(crate) fn stream_vision_sidecar(
     // unrelated Qwen trunk also says, so attaching it would be silent where this tower's mergers
     // and trunk fine-tune are not interchangeable. It is a combined install.
     refuse_minicpm_sidecar(weights, &config)?;
-    let family = repack::config_json_family(&config)
-        .ok_or_else(|| "config.json declares no model_type this port recognizes".to_string())?;
+    // Inkling 2 is not in the generic HF table (its trunk has its own
+    // intake, `install_inkling2_repo`), so its root `model_type` is resolved
+    // here; the tower then goes through the shared walk below
+    // (`docs/INKLING2_VISION_PHASE0.md`).
+    let family = if config.get("model_type").and_then(|m| m.as_str())
+        == Some(repack::INKLING2_MODEL_TYPE)
+    {
+        ModelFamily::Inkling2Loop
+    } else {
+        repack::config_json_family(&config)
+            .ok_or_else(|| "config.json declares no model_type this port recognizes".to_string())?
+    };
     let arch = match family {
+        ModelFamily::Inkling2Loop => repack::parse_inkling2_config(&config_text)
+            .map(|(arch, _)| arch)
+            .map_err(|e| e.to_string()),
         ModelFamily::Gemma4 => repack::parse_gemma4_config(&config_text).map_err(|e| e.to_string()),
         ModelFamily::QwenGdnMoe => {
             repack::parse_qwen_gdn_moe_config(&config_text).map_err(|e| e.to_string())

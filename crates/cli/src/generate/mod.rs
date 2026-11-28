@@ -391,6 +391,8 @@ fn run_one_turn(
             vision::attach_siglip(session, &rendered, images)?
         } else if session.runner.deepseek_ocr_image_ids().is_some() {
             vision::attach_deepseek_ocr(session, &rendered, images)?
+        } else if session.runner.inkling2_image_ids().is_some() {
+            vision::attach_inkling2(session, &rendered, images)?
         } else if session.runner.internvl_image_ids().is_some() {
             vision::attach_internvl(session, &rendered, images)?
         } else if session.runner.idefics3_image_ids().is_some() {

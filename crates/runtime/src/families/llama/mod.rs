@@ -329,7 +329,11 @@ impl RealForwardRunner {
             )?;
 
             let t_wait = Instant::now();
-            phases.cb1_gpu_nanos += (pass.commit().wait_with_gpu_time() * 1e9) as u64;
+            phases.cb1_gpu_nanos += (pass
+                .commit_checked()
+                .map_err(RealForwardError::Gpu)?
+                .wait_with_gpu_time()
+                * 1e9) as u64;
             phases.gpu_wait_nanos += t_wait.elapsed().as_nanos() as u64;
 
             pass = context.begin_pass_labeled("routed cb");
@@ -400,7 +404,11 @@ impl RealForwardRunner {
             pass.relabel("final cb (prefill, no head)");
         }
         let t_wait = Instant::now();
-        phases.final_cb_gpu_nanos += (pass.commit_and_wait_with_gpu_time() * 1e9) as u64;
+        phases.final_cb_gpu_nanos += (pass
+            .commit_checked()
+            .map_err(RealForwardError::Gpu)?
+            .wait_with_gpu_time()
+            * 1e9) as u64;
         phases.final_wait_nanos += t_wait.elapsed().as_nanos() as u64;
         self.kv.advance();
         // The command buffer has been waited on, so every layer's capture

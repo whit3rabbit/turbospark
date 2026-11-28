@@ -13,7 +13,8 @@
 
 use half::f16;
 use turbospark_gpu::{
-    dequant_q4_k_gemv, dequant_q4_k_gemv_resident, q4_k_row_bytes, MetalContext, Q4KResidentMatrix,
+    dequant_q4_k_gemv, dequant_q4_k_gemv_resident, dequant_q4_k_gemv_resident_wide, q4_k_row_bytes,
+    MetalContext, Q4KResidentMatrix,
 };
 
 const SUPERBLOCK: usize = 256;
@@ -278,4 +279,78 @@ fn embed_lookup_reads_the_right_row_and_scales_it() {
         peak > 1.0,
         "the test row is too small to prove the scale: {peak}"
     );
+}
+
+/// The KERN-04 wide-load bench arm (`dequant_q4_k_gemv_wide`) against the CPU
+/// reference: several widths, 13 rows (not a multiple of 8), a matrix behind
+/// 4096 bytes of garbage, and sub-blocks whose ranges differ by up to 15x so
+/// the split 6-bit scales of sub-blocks 4..8 carry weight. Its lanes read
+/// four bytes of one group, so a wrong group or slot index shuffles elements
+/// and fails here.
+#[test]
+fn the_wide_load_arm_matches_cpu_reference() {
+    let mut context = MetalContext::new().expect("Metal device available on this machine");
+    for (n, seed) in [
+        (SUPERBLOCK, 3u32),
+        (4 * SUPERBLOCK, 5),
+        (16 * SUPERBLOCK, 9),
+    ] {
+        let m = 13usize;
+        let rows: Vec<Vec<u8>> = (0..m)
+            .map(|r| {
+                let mut w = weights(n, seed * 100 + r as u32);
+                for (i, v) in w.iter_mut().enumerate() {
+                    *v *= 1.0 + ((i / SUB) % 8) as f32 * 2.0;
+                }
+                turbospark_compute::quantize_q4_k(&w)
+            })
+            .collect();
+        let refs: Vec<&[u8]> = rows.iter().map(|r| r.as_slice()).collect();
+        let pad = 4096usize;
+        let mut blob = vec![0xABu8; pad];
+        for r in &rows {
+            blob.extend_from_slice(r);
+        }
+        let buffer = context.new_buffer_with_data(&blob);
+        let x_f32 = weights(n, seed + 1000);
+        let x_f16: Vec<f16> = x_f32.iter().map(|&v| f16::from_f32(v)).collect();
+        let cpu = turbospark_compute::dequant_q4_k_gemv(&refs, &x_f32, n);
+        let gpu = dequant_q4_k_gemv_resident_wide(
+            &mut context,
+            &Q4KResidentMatrix {
+                buffer: &buffer,
+                weights_offset: pad as u64,
+                rows: m,
+                cols: n,
+            },
+            &x_f16,
+        )
+        .expect("GPU dispatch succeeds");
+        assert_matches(&format!("wide n={n}"), &gpu, &cpu, n);
+    }
+}
+
+/// The wide arm's `uint` loads need a 4-byte aligned weights offset; a
+/// misaligned one is refused instead of read as shifted words.
+#[test]
+fn the_wide_load_arm_refuses_a_misaligned_offset() {
+    let mut context = MetalContext::new().expect("Metal device available on this machine");
+    let n = SUPERBLOCK;
+    let row = turbospark_compute::quantize_q4_k(&weights(n, 1));
+    let mut blob = vec![0u8; 2];
+    blob.extend_from_slice(&row);
+    let buffer = context.new_buffer_with_data(&blob);
+    let x = vec![f16::from_f32(0.5); n];
+    let err = dequant_q4_k_gemv_resident_wide(
+        &mut context,
+        &Q4KResidentMatrix {
+            buffer: &buffer,
+            weights_offset: 2,
+            rows: 1,
+            cols: n,
+        },
+        &x,
+    )
+    .expect_err("misaligned offset");
+    assert!(err.to_string().contains("aligned"), "{err}");
 }

@@ -172,6 +172,8 @@ pub use real_forward::{
     dispatch_profile_report, PhaseCounters, RealForwardError, RealForwardRunner, RollbackPoint,
 };
 #[cfg(target_os = "macos")]
+pub use real_forward_api::IdleProbeAction;
+#[cfg(target_os = "macos")]
 pub use real_forward_init::{
     effective_expert_slot_wiring, install_resident_experts_supported, mapped_residency_refusal,
     mapped_residency_supported, resident_experts_decision, resident_residency_supported,
@@ -204,11 +206,15 @@ pub use turn_stream::{TurnEvent, TurnSplitter};
 pub use foundation::TokenId;
 
 #[cfg(target_os = "macos")]
+pub mod ace_step15;
+#[cfg(target_os = "macos")]
 pub mod fish_drama3;
 #[cfg(target_os = "macos")]
 pub mod fish_drama3_codec;
 #[cfg(target_os = "macos")]
 pub mod fish_drama3_tower;
+#[cfg(target_os = "macos")]
+pub mod fluid_speech;
 #[cfg(target_os = "macos")]
 pub mod kokoro;
 #[cfg(target_os = "macos")]

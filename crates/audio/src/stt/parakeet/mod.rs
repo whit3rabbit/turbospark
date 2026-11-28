@@ -14,7 +14,7 @@ use turbospark_audio::nemo_mel::{nemo_log_mel_spectrogram, NemoMelNormalization,
 use turbospark_audio::stft::StftOptions;
 use turbospark_model_io::safetensors::SafetensorsFile;
 
-use crate::models::vad::sortformer::{FastConformer, FcEncoderConfig};
+use crate::models::vad::sortformer::{FastConformer, FcEncoderConfig, ParakeetWeights};
 use crate::nn::json::{
     bool_field, frontend_len, frontend_seconds_to_samples, required, text_field, usize_field,
 };
@@ -26,7 +26,10 @@ use crate::stt::nemo::alignment::{
 use crate::stt::nemotron_asr::rnnt::{lstm_stack, Joint, LstmLayer};
 use crate::{Result, SpeechError};
 
+mod fluid;
 mod redux;
+
+pub use fluid::{FluidSpeechConfig, CLEAN_MODE_FILE};
 
 /// Immutable upstream MLX reference profiles. Redux uses a distinct ternary
 /// weight format that the Rust loader expands to temporary F32 tensors.
@@ -55,6 +58,34 @@ pub const PARAKEET_REDUX: ParakeetProfile = ParakeetProfile {
     revision: "2bf128600aac4b16946f7ed8372e56117fe5e23b",
 };
 
+/// FluidVoice's MLX export: fp32 `model.safetensors`, 8-bit
+/// `model.8bit.safetensors`, and the `clean-mode.safetensors` adapter.
+pub const PARAKEET_FLUID_SPEECH_PRO: ParakeetProfile = ParakeetProfile {
+    name: "Fluid Speech Pro",
+    repository: "FluidVoice-Labs/fluid-speech-pro-mlx",
+    revision: "aeb1d4e43487586b15d86c0a1dd4511e1cf6b7a0",
+};
+
+/// Fluid Speech Pro's two published transcript styles. Verbatim keeps
+/// fillers and repetitions; Clean folds the checkpoint's trained adapter in
+/// (it is a model change, not a text post-processor).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TranscriptStyle {
+    #[default]
+    Verbatim,
+    Clean,
+}
+
+/// Weight file names of the Fluid MLX export, tried in this order.
+const FLUID_FP32_WEIGHTS: &str = "model.safetensors";
+const FLUID_INT8_WEIGHTS: &str = "model.8bit.safetensors";
+/// The reference quantizes with `nn.quantize(group_size=64, bits=8)` and
+/// writes no scheme into the file, so it is checked against tensor shapes.
+const FLUID_QUANT: crate::quant::QuantScheme = crate::quant::QuantScheme {
+    bits: 8,
+    group_size: 64,
+};
+
 /// Parsed config for the supported NeMo FastConformer-RNNT-TDT layout.
 #[derive(Debug, Clone)]
 pub struct ParakeetConfig {
@@ -70,6 +101,8 @@ pub struct ParakeetConfig {
     pub durations: Vec<usize>,
     pub max_symbols: usize,
     pub vocabulary: Vec<String>,
+    /// Present for Fluid Speech Pro checkpoints (`fluid_speech` block).
+    pub fluid: Option<FluidSpeechConfig>,
     redux_mode: bool,
 }
 
@@ -265,6 +298,16 @@ impl ParakeetConfig {
                 "decoder, vocabulary, duration head, and encoder dimensions disagree",
             ));
         }
+        let fluid = v
+            .get("fluid_speech")
+            .map(|block| FluidSpeechConfig::parse(block, hidden_size))
+            .transpose()?;
+        let mut mel = mel;
+        if fluid.is_some() {
+            // The reference frontend takes statistics over complete hop
+            // frames and zeroes NeMo's trailing padded frame.
+            mel.normalize_valid_frames = true;
+        }
         Ok(Self {
             sample_rate,
             mel,
@@ -278,6 +321,7 @@ impl ParakeetConfig {
             durations,
             max_symbols,
             vocabulary,
+            fluid,
             redux_mode,
         })
     }
@@ -308,10 +352,22 @@ fn load_checked(file: &SafetensorsFile, name: &str, shape: &[usize]) -> Result<V
 
 impl TdtDecoder {
     fn load(file: &SafetensorsFile, cfg: &ParakeetConfig) -> Result<Self> {
+        Self::load_with(file, cfg, None, None)
+    }
+
+    /// `load` with optional MLX-quantized joint linears and a Fluid
+    /// clean-mode adapter whose two vectors fold into the first LSTM layer's
+    /// input bias and the joint predictor bias.
+    fn load_with(
+        file: &SafetensorsFile,
+        cfg: &ParakeetConfig,
+        quant: Option<crate::quant::QuantScheme>,
+        clean: Option<&fluid::CleanAdapter>,
+    ) -> Result<Self> {
         let h = cfg.decoder_hidden;
         let vocab_rows = cfg.vocab_size + 1;
         let embedding = load_checked(file, "decoder.prediction.embed.weight", &[vocab_rows, h])?;
-        let layers = (0..cfg.decoder_layers)
+        let mut layers = (0..cfg.decoder_layers)
             .map(|i| {
                 let prefix = format!("decoder.prediction.dec_rnn.lstm.{i}");
                 Ok(LstmLayer {
@@ -323,36 +379,55 @@ impl TdtDecoder {
             .collect::<Result<Vec<_>>>()?;
         let joint_h = cfg.joint_hidden;
         let output_rows = cfg.vocab_size + 1 + cfg.num_extra_outputs;
+        let linear = |base: &str, out: usize, inp: usize| -> Result<(Vec<f32>, Vec<f32>)> {
+            let (w, b) = match quant {
+                Some(scheme) => crate::quant::load_quantized(file, base, scheme)?,
+                None => (
+                    load_checked(file, &format!("{base}.weight"), &[out, inp])?,
+                    Some(load_checked(file, &format!("{base}.bias"), &[out])?),
+                ),
+            };
+            match b {
+                Some(b) if w.len() == out * inp && b.len() == out => Ok((w, b)),
+                _ => Err(SpeechError::Tensor {
+                    name: base.to_string(),
+                    why: format!("expected weight [{out}, {inp}] and bias [{out}]"),
+                }),
+            }
+        };
+        let (enc_w, enc_b) = linear("joint.enc", joint_h, cfg.encoder.hidden_size)?;
+        let (pred_w, mut pred_b) = linear("joint.pred", joint_h, h)?;
+        let (out_w, out_b) = linear("joint.joint_net.2", output_rows, joint_h)?;
+        if let Some(clean) = clean {
+            if clean.decoder_input.len() != h || clean.joint_hidden.len() != joint_h {
+                return Err(SpeechError::Tensor {
+                    name: "clean-mode decoder_input/joint_hidden".into(),
+                    why: format!("expected {h} and {joint_h} values"),
+                });
+            }
+            let first = layers.first_mut().ok_or_else(|| SpeechError::Tensor {
+                name: "decoder.prediction.dec_rnn.lstm.0".into(),
+                why: "clean mode needs at least one LSTM layer".into(),
+            })?;
+            // bias += Wx @ decoder_input: a constant added to every LSTM input.
+            for (row, bias) in first.wx.chunks_exact(h).zip(first.bias.iter_mut()) {
+                *bias += row
+                    .iter()
+                    .zip(&clean.decoder_input)
+                    .map(|(w, v)| w * v)
+                    .sum::<f32>();
+            }
+            for (b, v) in pred_b.iter_mut().zip(&clean.joint_hidden) {
+                *b += v;
+            }
+        }
         Ok(Self {
             embedding,
             layers,
             joint_net: Joint::new(
-                Linear::new(
-                    load_checked(
-                        file,
-                        "joint.enc.weight",
-                        &[joint_h, cfg.encoder.hidden_size],
-                    )?,
-                    Some(load_checked(file, "joint.enc.bias", &[joint_h])?),
-                    cfg.encoder.hidden_size,
-                    joint_h,
-                ),
-                Linear::new(
-                    load_checked(file, "joint.pred.weight", &[joint_h, h])?,
-                    Some(load_checked(file, "joint.pred.bias", &[joint_h])?),
-                    h,
-                    joint_h,
-                ),
-                Linear::new(
-                    load_checked(file, "joint.joint_net.2.weight", &[output_rows, joint_h])?,
-                    Some(load_checked(
-                        file,
-                        "joint.joint_net.2.bias",
-                        &[output_rows],
-                    )?),
-                    joint_h,
-                    output_rows,
-                ),
+                Linear::new(enc_w, Some(enc_b), cfg.encoder.hidden_size, joint_h),
+                Linear::new(pred_w, Some(pred_b), h, joint_h),
+                Linear::new(out_w, Some(out_b), joint_h, output_rows),
             ),
         })
     }
@@ -417,13 +492,23 @@ pub struct ParakeetTdt {
     config: ParakeetConfig,
     encoder: FastConformer,
     decoder: TdtDecoder,
+    /// Fluid Speech Pro's extra block; `None` for every other profile.
+    frame_cleaner: Option<fluid::FrameCleaner>,
+    style: TranscriptStyle,
 }
 
 impl ParakeetTdt {
-    /// Opens a local v2/v3 MLX install or the pinned raw Redux export.
+    /// Opens a local v2/v3 MLX install, the pinned raw Redux export, or a
+    /// Fluid Speech Pro MLX export (verbatim style).
     /// Redux weights are converted to a temporary F32 checkpoint at load and
     /// that temporary file is deleted before this method returns.
     pub fn open(model_dir: &Path) -> Result<Self> {
+        Self::open_with_style(model_dir, TranscriptStyle::Verbatim)
+    }
+
+    /// `open` with a transcript style. `Clean` needs a Fluid Speech Pro
+    /// export with `clean-mode.safetensors`; other checkpoints refuse it.
+    pub fn open_with_style(model_dir: &Path, style: TranscriptStyle) -> Result<Self> {
         let config_path = model_dir.join("config.json");
         let config_value: Value =
             serde_json::from_slice(&std::fs::read(&config_path).map_err(|e| {
@@ -433,6 +518,14 @@ impl ParakeetTdt {
                 )
             })?)
             .map_err(|e| bad("config.json", format!("invalid JSON: {e}")))?;
+        if config_value.get("fluid_speech").is_some() {
+            return Self::open_fluid(model_dir, ParakeetConfig::from_json(&config_value)?, style);
+        }
+        if style == TranscriptStyle::Clean {
+            return Err(SpeechError::Unsupported {
+                why: "clean transcripts need a Fluid Speech Pro checkpoint".into(),
+            });
+        }
         if config_value.get("ternary_modules").is_some() {
             let normalized = redux::normalized_config(model_dir, &config_value)?;
             let config = ParakeetConfig::parse(&normalized, true)?;
@@ -467,11 +560,77 @@ impl ParakeetTdt {
             config,
             encoder,
             decoder,
+            frame_cleaner: None,
+            style: TranscriptStyle::Verbatim,
+        })
+    }
+
+    /// Fluid Speech Pro: fp32 `model.safetensors` when present, else the
+    /// 8-bit file (dequantized to f32 at load), plus the FrameCleaner and,
+    /// for `Clean`, the folded adapter.
+    fn open_fluid(
+        model_dir: &Path,
+        config: ParakeetConfig,
+        style: TranscriptStyle,
+    ) -> Result<Self> {
+        let fluid_cfg = config
+            .fluid
+            .clone()
+            .ok_or_else(|| bad("fluid_speech", "missing"))?;
+        let fp32 = model_dir.join(FLUID_FP32_WEIGHTS);
+        let (weights_path, quant) = if fp32.is_file() {
+            (fp32, None)
+        } else {
+            (model_dir.join(FLUID_INT8_WEIGHTS), Some(FLUID_QUANT))
+        };
+        let file = SafetensorsFile::open(&weights_path)?;
+        if quant.is_some() {
+            check_fluid_quant_scheme(&file, config.encoder.hidden_size)?;
+        }
+        let clean = match style {
+            TranscriptStyle::Verbatim => None,
+            TranscriptStyle::Clean => Some(fluid::CleanAdapter::open(model_dir, &fluid_cfg)?),
+        };
+        let fold = |module: &str, weight: &mut [f32]| -> Result<()> {
+            match &clean {
+                Some(adapter) => adapter.fold(module, weight),
+                None => Ok(()),
+            }
+        };
+        let weights = ParakeetWeights {
+            file: &file,
+            quant,
+            delta: Some(&fold),
+        };
+        let encoder = FastConformer::load_parakeet_weights(&weights, &config.encoder)?;
+        // The block has no clean-mode update; load it without the delta.
+        let frame_cleaner = fluid::FrameCleaner::load(
+            &ParakeetWeights {
+                delta: None,
+                ..weights
+            },
+            &fluid_cfg,
+        )?;
+        let decoder = TdtDecoder::load_with(&file, &config, quant, clean.as_ref())?;
+        if let Some(adapter) = &clean {
+            adapter.check_all_used()?;
+        }
+        Ok(Self {
+            config,
+            encoder,
+            decoder,
+            frame_cleaner: Some(frame_cleaner),
+            style,
         })
     }
 
     pub fn config(&self) -> &ParakeetConfig {
         &self.config
+    }
+
+    /// The transcript style this instance was opened with.
+    pub fn style(&self) -> TranscriptStyle {
+        self.style
     }
 
     /// Mel frontend plus FastConformer encoder as a t-major feature matrix.
@@ -489,8 +648,29 @@ impl ParakeetTdt {
                 channel_major[m * mel_frames + t] = value;
             }
         }
-        self.encoder
-            .encode_mel(&channel_major, mel_frames, mel_frames, &self.config.encoder)
+        let Some(cleaner) = &self.frame_cleaner else {
+            return self.encoder.encode_mel(
+                &channel_major,
+                mel_frames,
+                mel_frames,
+                &self.config.encoder,
+            );
+        };
+        // NeMo layout: `samples / hop` real frames plus one padded frame.
+        let valid = samples.len() / self.config.mel.stft.hop;
+        if valid + 1 != mel_frames {
+            return Err(SpeechError::Audio(format!(
+                "expected {} NeMo mel frames, found {mel_frames}",
+                valid + 1
+            )));
+        }
+        self.encoder.encode_mel_masked(
+            &channel_major,
+            mel_frames,
+            valid,
+            &self.config.encoder,
+            &|hidden, frames| cleaner.forward(hidden, frames),
+        )
     }
 
     /// Transcribes finite mono PCM at the configured sample rate.
@@ -628,6 +808,30 @@ fn argmax(values: &[f32]) -> usize {
         }
     }
     best
+}
+
+/// The 8-bit Fluid file records no scheme, so the expected 8-bit, group-64
+/// layout is checked on one known `[4 * hidden, hidden]` linear: packed
+/// words `hidden * 8 / 32` and `hidden / 64` groups per row. Any other
+/// layout would dequantize to wrong weights without an error.
+fn check_fluid_quant_scheme(file: &SafetensorsFile, hidden: usize) -> Result<()> {
+    let base = "encoder.layers.0.feed_forward1.linear1";
+    let shape = |suffix: &str| {
+        file.descriptor(&format!("{base}.{suffix}"))
+            .map(|d| d.shape.clone())
+    };
+    let bits = FLUID_QUANT.bits as usize;
+    let want_weight = vec![4 * hidden, hidden * bits / 32];
+    let want_groups = vec![4 * hidden, hidden / FLUID_QUANT.group_size];
+    if shape("weight") != Some(want_weight)
+        || shape("scales") != Some(want_groups.clone())
+        || shape("biases") != Some(want_groups)
+    {
+        return Err(SpeechError::Unsupported {
+            why: "Fluid Speech Pro quantized weights must be MLX 8-bit with group size 64".into(),
+        });
+    }
+    Ok(())
 }
 
 /// True for control pieces the decoder may emit but a transcript never
@@ -1351,5 +1555,241 @@ mod decode_parity {
             }
         }
         assert!(non_empty > 0, "vacuous test inputs");
+    }
+}
+
+/// Fluid Speech Pro parity against `testdata/parakeet_fluid/`, generated by
+/// `scripts/generate_fluid_speech_fixtures.py` from the publisher's MLX
+/// loader on the 8-bit weights. The frontend checks need no checkpoint; the
+/// rest run with TURBOSPEECH_FLUID_SPEECH_MODEL (default
+/// `~/models/fluid-speech-pro-mlx`) and skip cleanly without it.
+#[cfg(test)]
+mod fluid_parity {
+    use super::*;
+    use std::cell::RefCell;
+
+    fn testdata(name: &str) -> String {
+        format!(
+            "{}/testdata/parakeet_fluid/{name}",
+            env!("CARGO_MANIFEST_DIR")
+        )
+    }
+
+    fn read_npy(name: &str) -> (Vec<usize>, Vec<f32>) {
+        let path = testdata(name);
+        let bytes = std::fs::read(&path).expect(&path);
+        assert_eq!(&bytes[..6], b"\x93NUMPY");
+        let header_len = u16::from_le_bytes([bytes[8], bytes[9]]) as usize;
+        let header = std::str::from_utf8(&bytes[10..10 + header_len]).unwrap();
+        assert!(header.contains("'<f4'"), "{name} must be little-endian f32");
+        let start = header.find('(').unwrap() + 1;
+        let end = header[start..].find(')').unwrap() + start;
+        let shape = header[start..end]
+            .split(',')
+            .filter_map(|p| p.trim().parse::<usize>().ok())
+            .collect();
+        let data = bytes[10 + header_len..]
+            .chunks_exact(4)
+            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect();
+        (shape, data)
+    }
+
+    fn max_abs_diff(a: &[f32], b: &[f32]) -> f32 {
+        assert_eq!(a.len(), b.len());
+        a.iter()
+            .zip(b)
+            .map(|(x, y)| (x - y).abs())
+            .fold(0.0f32, f32::max)
+    }
+
+    fn manifest() -> Value {
+        serde_json::from_str(&std::fs::read_to_string(testdata("manifest.json")).unwrap()).unwrap()
+    }
+
+    fn fixture_config() -> ParakeetConfig {
+        let value: Value =
+            serde_json::from_str(&std::fs::read_to_string(testdata("config.json")).unwrap())
+                .unwrap();
+        ParakeetConfig::from_json(&value).unwrap()
+    }
+
+    fn model_dir() -> Option<std::path::PathBuf> {
+        let dir = std::env::var("TURBOSPEECH_FLUID_SPEECH_MODEL").unwrap_or_else(|_| {
+            format!(
+                "{}/models/fluid-speech-pro-mlx",
+                std::env::var("HOME").unwrap()
+            )
+        });
+        let dir = std::path::PathBuf::from(dir);
+        if dir.join(FLUID_INT8_WEIGHTS).exists() || dir.join(FLUID_FP32_WEIGHTS).exists() {
+            Some(dir)
+        } else {
+            eprintln!(
+                "skipping: Fluid Speech Pro checkpoint not present at {}",
+                dir.display()
+            );
+            None
+        }
+    }
+
+    #[test]
+    fn profile_is_pinned() {
+        assert_eq!(PARAKEET_FLUID_SPEECH_PRO.revision.len(), 40);
+        assert_eq!(
+            PARAKEET_FLUID_SPEECH_PRO.revision,
+            manifest()["model_revision"].as_str().unwrap()
+        );
+    }
+
+    #[test]
+    fn config_selects_fluid_frontend() {
+        let cfg = fixture_config();
+        let fluid = cfg.fluid.as_ref().expect("fluid_speech block");
+        assert_eq!((fluid.insert_dim, fluid.insert_kernel), (1024, 15));
+        assert_eq!((fluid.clean_rank, fluid.clean_alpha), (32, 64.0));
+        assert!(cfg.mel.normalize_valid_frames);
+    }
+
+    #[test]
+    fn mel_frontend_matches_reference() {
+        let cfg = fixture_config();
+        let (_, samples) = read_npy("samples.npy");
+        let (shape, golden) = read_npy("mel.npy");
+        let mel = nemo_log_mel_spectrogram(&samples, &cfg.mel).unwrap();
+        assert_eq!(vec![mel.len(), mel[0].len()], shape);
+        // The padded frame must be exactly zero, as the reference writes it.
+        assert!(mel.last().unwrap().iter().all(|&v| v == 0.0));
+        let flat: Vec<f32> = mel.into_iter().flatten().collect();
+        let diff = max_abs_diff(&flat, &golden);
+        eprintln!("fluid mel max abs diff {diff:e}");
+        // Measured 2.6e-4 against the MLX float32 FFT on 2026-11-27.
+        assert!(diff < 5e-4, "mel diff {diff}");
+    }
+
+    /// Subsampling (masked), FrameCleaner, and the encoder for one style.
+    fn check_encoder(model: &ParakeetTdt, golden_name: &str) -> (f32, f32, f32) {
+        let (_, samples) = read_npy("samples.npy");
+        let cfg = &model.config;
+        let mel = nemo_log_mel_spectrogram(&samples, &cfg.mel).unwrap();
+        let frames = mel.len();
+        let mut channel_major = vec![0.0; cfg.encoder.num_mel_bins * frames];
+        for (t, row) in mel.iter().enumerate() {
+            for (m, &v) in row.iter().enumerate() {
+                channel_major[m * frames + t] = v;
+            }
+        }
+        let captured = RefCell::new((Vec::new(), Vec::new()));
+        let cleaner = model.frame_cleaner.as_ref().unwrap();
+        let (encoded, valid) = model
+            .encoder
+            .encode_mel_masked(
+                &channel_major,
+                frames,
+                samples.len() / cfg.mel.stft.hop,
+                &cfg.encoder,
+                &|hidden, n| {
+                    captured.borrow_mut().0 = hidden.to_vec();
+                    cleaner.forward(hidden, n)?;
+                    captured.borrow_mut().1 = hidden.to_vec();
+                    Ok(())
+                },
+            )
+            .unwrap();
+        let (cleaner_in, cleaner_out) = captured.into_inner();
+        let (_, want_in) = read_npy("cleaner_in.npy");
+        let (_, want_out) = read_npy("cleaner_out.npy");
+        let (enc_shape, want_enc) = read_npy(golden_name);
+        assert_eq!(enc_shape, vec![valid, cfg.encoder.hidden_size]);
+        // Subsampling activations reach the thousands, so their float32
+        // reduction-order noise is judged relative to the tensor's peak.
+        (
+            relative_diff(&cleaner_in, &want_in),
+            relative_diff(&cleaner_out, &want_out),
+            max_abs_diff(&encoded, &want_enc),
+        )
+    }
+
+    fn relative_diff(got: &[f32], want: &[f32]) -> f32 {
+        let peak = want.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        assert!(peak > 0.0, "vacuous golden");
+        max_abs_diff(got, want) / peak
+    }
+
+    fn tokens(model: &ParakeetTdt) -> (Vec<i32>, String) {
+        let (_, samples) = read_npy("samples.npy");
+        let result = model.decode(&samples, 16_000).unwrap();
+        let ids = result
+            .sentences
+            .iter()
+            .flat_map(|s| s.tokens.iter().map(|t| t.id))
+            .collect();
+        (ids, result.text)
+    }
+
+    fn want_tokens(style: &str) -> (Vec<i32>, String) {
+        let m = manifest();
+        let ids = m[style]["tokens"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_i64().unwrap() as i32)
+            .collect();
+        (ids, m[style]["text"].as_str().unwrap().to_owned())
+    }
+
+    #[test]
+    fn verbatim_matches_reference() {
+        let Some(dir) = model_dir() else { return };
+        let model = ParakeetTdt::open(&dir).unwrap();
+        assert_eq!(model.style(), TranscriptStyle::Verbatim);
+        let (sub, cleaned, enc) = check_encoder(&model, "encoder_verbatim.npy");
+        eprintln!(
+            "fluid verbatim: subsampling rel {sub:e}, cleaner rel {cleaned:e}, encoder {enc:e}"
+        );
+        assert!(
+            sub < 1e-4 && cleaned < 1e-4 && enc < 1e-4,
+            "{sub} {cleaned} {enc}"
+        );
+        assert_eq!(tokens(&model), want_tokens("verbatim"));
+    }
+
+    #[test]
+    fn clean_matches_reference() {
+        let Some(dir) = model_dir() else { return };
+        let model = ParakeetTdt::open_with_style(&dir, TranscriptStyle::Clean).unwrap();
+        let (sub, cleaned, enc) = check_encoder(&model, "encoder_clean.npy");
+        eprintln!("fluid clean: subsampling rel {sub:e}, cleaner rel {cleaned:e}, encoder {enc:e}");
+        assert!(
+            sub < 1e-4 && cleaned < 1e-4 && enc < 1e-4,
+            "{sub} {cleaned} {enc}"
+        );
+        let (ids, text) = tokens(&model);
+        assert_eq!((ids, text.clone()), want_tokens("clean"));
+        assert_ne!(
+            text,
+            want_tokens("verbatim").1,
+            "styles must differ on this clip"
+        );
+    }
+
+    #[test]
+    fn non_fluid_checkpoint_refuses_clean_style() {
+        let dir =
+            std::env::temp_dir().join(format!("parakeet-clean-refusal-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::copy(
+            format!(
+                "{}/testdata/parakeet/config.json",
+                env!("CARGO_MANIFEST_DIR")
+            ),
+            dir.join("config.json"),
+        )
+        .unwrap();
+        let err = ParakeetTdt::open_with_style(&dir, TranscriptStyle::Clean)
+            .err()
+            .expect("clean must be refused");
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(err.to_string().contains("Fluid Speech Pro"), "{err}");
     }
 }

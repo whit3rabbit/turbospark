@@ -54,6 +54,7 @@ selection = { package = "turbospark-selection", path = "../selection", version =
 tokenizer = { package = "turbospark-tokenizer", path = "../tokenizer", version = "0.10.2" }
 catalog = { package = "turbospark-catalog", path = "../catalog", version = "0.10.2" }
 gpu = { package = "turbospark-gpu", path = "../gpu", version = "0.10.2" }
+compute = { package = "turbospark-compute", path = "../compute", version = "0.10.2" }
 # `image-stage` runs one denoise step at a time (LAB-36).
 turbospark-image = { path = "../image", version = "0.10.2" }
 # `~cold` arms drop an install's resident pages before a run (LAB-14).

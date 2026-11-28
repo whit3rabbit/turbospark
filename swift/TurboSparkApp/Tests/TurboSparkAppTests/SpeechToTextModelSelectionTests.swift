@@ -81,6 +81,26 @@ final class SpeechToTextModelSelectionTests: XCTestCase {
         XCTAssertFalse(SpeechToTextJob.final.accepts(unsupported), "a family this build cannot run is never offered")
     }
 
+    func testFluidSpeechProRanksAfterUltraAndBeforeRedux() {
+        let listed = ["whisper-base", "fluid-speech-pro-mlx-8bit", "parakeet-redux-coreml", "fluid-speech-pro-coreml",
+                      "parakeet-ultra-coreml"].map { profile($0) }
+        XCTAssertEqual(AudioWorkspaceController.preferredSpeechProfiles(listed, languageCode: nil).map(\.identity.alias),
+                       ["parakeet-ultra-coreml", "fluid-speech-pro-coreml", "parakeet-redux-coreml",
+                        "fluid-speech-pro-mlx-8bit", "whisper-base"])
+    }
+
+    func testCleanTranscriptsReachOnlyTheFluidCPUFamily() {
+        let base = AudioRequest(task: .speechToText)
+        let style = { (family: String, clean: Bool) in
+            AudioWorkspaceController.transcriptionRequest(base, family: family, clean: clean).transcriptStyle
+        }
+        XCTAssertEqual(style("fluid_speech_pro", true), "clean")
+        XCTAssertNil(style("fluid_speech_pro", false), "off means the verbatim default")
+        // The Core ML Fluid row and every other engine refuse a style.
+        XCTAssertNil(style("parakeet_tdt", true))
+        XCTAssertNil(style("whisper", true))
+    }
+
     func testEachModeKeepsItsOwnChoice() {
         let all: Set<String> = ["whisper-base", "parakeet-ultra-coreml", "parakeet-redux-coreml"]
         let selected = [SpeechToTextModels.key(.meeting, .final): "whisper-base"]

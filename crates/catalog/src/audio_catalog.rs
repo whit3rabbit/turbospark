@@ -622,6 +622,9 @@ impl AudioCatalog {
                         .ok_or("audio weight size overflow")?;
                     (compiled.saturating_mul(3).saturating_add(16_000*1800*4).saturating_add(256<<20),"estimate: three times compiled weights, 30-minute PCM, and 256 MiB working reserve; Redux measured 488 MB peak footprint on one 2.8 s clip (GPU encoder, M4 Max)")
                 }
+                // The 8-bit export is dequantized to f32 at load (and clean
+                // style folds its adapter into those weights).
+                AudioTask::SpeechToText if family == "fluid_speech_pro" => (weight_bytes.saturating_mul(3).saturating_add(16_000*1800*4).saturating_add(512<<20),"measured 2.57 GB (verbatim) and 2.68 GB (clean) peak footprint on one 5 s clip (8-bit install, M4 Max, CPU); estimate: three times checkpoint weights, 30-minute PCM, and 512 MiB working reserve"),
                 AudioTask::SpeechToText if family == "parakeet_unified" => {
                     let compiled = row
                         .assets
@@ -664,6 +667,7 @@ impl AudioCatalog {
                 }
                 AudioTask::SpeechToText => (weight_bytes.saturating_mul(2).saturating_add(16_000*1800*4).saturating_add(256<<20),"estimate: twice checkpoint weights, 30-minute PCM, and 256 MiB working reserve"),
                 AudioTask::TextToSpeech => (weight_bytes.saturating_mul(2).saturating_add(256<<20),"estimate: twice checkpoint weights and 256 MiB voice/working reserve"),
+                AudioTask::Music if family == "ace_step15" => (weight_bytes.saturating_add(9<<29),"estimate: checkpoint weights plus 4.5 GiB for f32 widening, device copies and one song; measured 10.1 GiB footprint after a 10 s song on M4 Max, longer songs unqualified"),
                 AudioTask::Music => (weight_bytes.saturating_add(2<<30),"estimate: packed checkpoint weights and 2 GiB working reserve; full duration peak unqualified"),
                 _ => (weight_bytes.saturating_mul(4),"estimate: runtime admission pending"),
             };
@@ -1264,10 +1268,13 @@ impl AudioCatalog {
         // Rust session opens. Swift-hosted rows never reach one, and live-only
         // Parakeet Unified opens through the stream API, which checks its own
         // layout. Both Core ML layouts would fail the probe, so they get no
-        // speech receipt; the audio receipt still pins every asset.
+        // speech receipt; the audio receipt still pins every asset. The Fluid
+        // Speech Pro MLX export has no layout the probe knows either; its
+        // loader checks the config and tensors at open.
         if identity.task == AudioTask::SpeechToText
             && !profile.capabilities.backend.starts_with("swift_")
             && profile.family != "parakeet_unified"
+            && profile.family != "fluid_speech_pro"
         {
             crate::install_speech_receipt(
                 &source_root,
@@ -2101,7 +2108,9 @@ fn require_library_audio_dirs(root: &Path, path: &Path) -> Result<(), String> {
 /// Families whose generic catalog rows may run: a runtime adapter for them
 /// exists and was reviewed. Every other new row stays closed.
 const REVIEWED_ADAPTERS: &[&str] = &[
+    "ace_step15",
     "fish_drama3",
+    "fluid_speech_pro",
     "megatts3",
     "mel_roformer",
     "mossformer2_se",
@@ -2179,6 +2188,31 @@ fn profile_capabilities(family: &str) -> AudioCapabilities {
             ..Default::default()
         };
     }
+    if family == "breeze_tts" {
+        // The app's Swift MLX provider runs it (Vendor/Qwen3TTS, Breeze);
+        // the crates/audio port ends at codebook frames, so a Rust session
+        // cannot. It speaks with a preset speaker or an instruction, and a
+        // reference with its exact transcript makes it a clone, which needs
+        // consent. No server speech bridge exists for it yet.
+        return AudioCapabilities {
+            languages: vec![],
+            voices: vec![],
+            max_input_seconds: None,
+            supports_lyrics: false,
+            operations: vec!["synthesize".into(), "voice_clone".into()],
+            timing: None,
+            backend: "swift_mlx".into(),
+            cancellation: "frame".into(),
+            can_run: false,
+            unavailable_reason: Some(
+                "Breeze TTS 2 runs through the native Swift MLX provider; the Rust session API does not execute this family"
+                    .into(),
+            ),
+            compute: None,
+            http_api: false,
+            ..Default::default()
+        };
+    }
     if family == "megatts3" {
         return AudioCapabilities {
             languages: vec![],
@@ -2190,6 +2224,26 @@ fn profile_capabilities(family: &str) -> AudioCapabilities {
             // Metal by default; the CPU reference is the portable fallback.
             backend: "metal".into(),
             cancellation: "diffusion_step".into(),
+            can_run: true,
+            unavailable_reason: None,
+            compute: None,
+            http_api: true,
+            ..Default::default()
+        };
+    }
+    if family == "fluid_speech_pro" {
+        // The `audio::stt::parakeet` port of the Fluid Speech Pro MLX export
+        // on the CPU, in 15 s windows (`runtime::fluid_speech`). It is the
+        // only Fluid row with the clean style (`transcript_style`).
+        return AudioCapabilities {
+            languages: vec![],
+            voices: vec![],
+            max_input_seconds: None,
+            supports_lyrics: false,
+            operations: vec!["transcribe".into()],
+            timing: Some("token".into()),
+            backend: "portable_cpu".into(),
+            cancellation: "window".into(),
             can_run: true,
             unavailable_reason: None,
             compute: None,
@@ -2371,13 +2425,16 @@ fn profile_capabilities(family: &str) -> AudioCapabilities {
         "qwen3_tts" => ("synthesize","swift_mlx","decode_step",false,Some("Qwen3-TTS runs through the native Swift MLX provider; the Rust session API does not execute this family"),None),
         "kokoro" => ("synthesize","portable_cpu","sentence",false,Some("Kokoro Metal runtime is pending; CPU reference is available only with explicit portable opt-in"),None),
         "minimax_music3" => ("generate_music","metal","compute_operation",true,None,None),
+        "ace_step15" => ("generate_music","metal","compute_operation",true,None,None),
         _ => ("inspect","unavailable","unavailable",false,Some("No native workspace runtime adapter is available"),None),
     };
     AudioCapabilities {
         languages: vec![],
         voices: vec![],
         max_input_seconds: None,
-        supports_lyrics: false,
+        // Metadata rows take their capabilities from here; ACE-Step reads
+        // lyrics, Music 3 sets its own in its alias arms.
+        supports_lyrics: family == "ace_step15",
         operations: vec![operation.into()],
         timing: timing.map(str::to_string),
         backend: backend.into(),
@@ -3538,7 +3595,7 @@ mod tests {
     #[test]
     fn initial_audio_profiles_have_exact_complete_pins_and_wire_metadata() {
         let catalog = AudioCatalog::embedded().unwrap();
-        assert_eq!(catalog.entries().count(), 26);
+        assert_eq!(catalog.entries().count(), 30);
         for (task, alias, repo, revision, rate, channels) in [
             (
                 AudioTask::TextToSpeech,
@@ -3581,6 +3638,22 @@ mod tests {
                 2,
             ),
             (
+                AudioTask::Music,
+                "ace-step15-turbo",
+                "ACE-Step/Ace-Step1.5",
+                "19671f406d603126926c1b7e2adc169acbcade22",
+                48000,
+                2,
+            ),
+            (
+                AudioTask::TextToSpeech,
+                "breeze-tts-2-mxfp4",
+                "mlx-community/Breeze-TTS-2-mlx-4bit",
+                "3a06d26b172ea4ae1da2f42d708383e9c79d5526",
+                24000,
+                1,
+            ),
+            (
                 AudioTask::TextToSpeech,
                 "megatts3-f32",
                 "cowWhySo/MegaTTS3-TurboSpark",
@@ -3601,6 +3674,22 @@ mod tests {
                 "parakeet-ultra-coreml",
                 "FluidInference/parakeet-ultra-coreml",
                 "95eaa59a39d4394f047a4dc5cce480388a60d1b6",
+                16000,
+                1,
+            ),
+            (
+                AudioTask::SpeechToText,
+                "fluid-speech-pro-coreml",
+                "FluidVoice-Labs/fluid-speech-pro-coreml",
+                "3b9d38a93d606f84011e5a0a669b7ea146375a22",
+                16000,
+                1,
+            ),
+            (
+                AudioTask::SpeechToText,
+                "fluid-speech-pro-mlx-8bit",
+                "FluidVoice-Labs/fluid-speech-pro-mlx",
+                "aeb1d4e43487586b15d86c0a1dd4511e1cf6b7a0",
                 16000,
                 1,
             ),
@@ -3691,10 +3780,13 @@ mod tests {
         // The Core ML profile runs through the reviewed native adapter, and
         // its memory estimate counts compiled weights, not safetensors.
         // Ultra shares Redux's component contract, so it is the same family
-        // and decode flow; only its int8 encoder is larger.
+        // and decode flow; only its int8 encoder is larger. Fluid Speech Pro
+        // is the same family; the runtime picks its joint program and the
+        // standard TDT loop from the export (`ParakeetExport`).
         for (alias, encoder_bytes) in [
             ("parakeet-redux-coreml", 182_389_312u64),
             ("parakeet-ultra-coreml", 594_211_328),
+            ("fluid-speech-pro-coreml", 613_088_448),
         ] {
             let parakeet = catalog.get(alias).unwrap();
             assert_eq!(parakeet.family, "parakeet_tdt");
@@ -3710,6 +3802,18 @@ mod tests {
                 .operations
                 .contains(&"transcribe".to_string()));
         }
+        // The Fluid MLX row runs on the CPU (the app opens it portable) and
+        // is admitted for its f32-widened weights, not the 8-bit file size.
+        let fluid = catalog.get("fluid-speech-pro-mlx-8bit").unwrap();
+        assert_eq!(fluid.family, "fluid_speech_pro");
+        assert_eq!(fluid.capabilities.backend, "portable_cpu");
+        assert!(fluid.capabilities.can_run);
+        assert_eq!(fluid.capabilities.operations, ["transcribe"]);
+        assert!(fluid.resident_memory_bytes > 3 * 751_204_956);
+        assert!(fluid
+            .assets
+            .iter()
+            .any(|a| a.path == "clean-mode.safetensors"));
         // The live model pins one streaming encoder, not the 11 GB repo, and
         // is never offered as a batch transcriber.
         let unified = catalog.get("parakeet-unified-en-coreml").unwrap();
@@ -3998,6 +4102,63 @@ mod tests {
                 "{alias}"
             );
         }
+    }
+
+    #[test]
+    fn breeze_tts_profile_pins_codec_tokenizer_and_license_for_swift() {
+        let catalog = AudioCatalog::embedded().unwrap();
+        let profiles: Vec<_> = catalog
+            .entries()
+            .filter(|p| p.family == "breeze_tts")
+            .collect();
+        assert_eq!(profiles.len(), 1);
+        let profile = profiles[0];
+        assert_eq!(profile.identity.alias, "breeze-tts-2-mxfp4");
+        assert_eq!(profile.identity.task, AudioTask::TextToSpeech);
+        assert_eq!(profile.capabilities.backend, "swift_mlx");
+        assert!(
+            !profile.capabilities.can_run,
+            "Rust sessions must not claim Swift inference"
+        );
+        assert!(!profile.capabilities.http_api, "no server speech bridge");
+        assert_eq!(
+            profile.capabilities.operations,
+            vec!["synthesize".to_string(), "voice_clone".to_string()]
+        );
+        assert_eq!(profile.pcm_format.sample_rate, 24_000);
+        for path in [
+            "model.safetensors",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "audio_tokenizer/config.json",
+            "audio_tokenizer/model.safetensors",
+            "LICENSE",
+            "NOTICE",
+        ] {
+            assert!(profile.assets.iter().any(|f| f.path == path), "{path}");
+        }
+        // Breeze bundles the Qwen3-TTS 12 Hz codec unchanged.
+        let codec = |p: &AudioProfile, path: &str| {
+            p.assets
+                .iter()
+                .find(|f| f.path == path)
+                .map(|f| f.sha256.clone())
+        };
+        let qwen = catalog.get("qwen3-tts-12hz-06b-base-8bit").unwrap();
+        assert_eq!(
+            codec(profile, "audio_tokenizer/model.safetensors"),
+            codec(qwen, "speech_tokenizer/model.safetensors")
+        );
+        assert_eq!(
+            profile
+                .acknowledgments
+                .iter()
+                .map(|a| a.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["breezeblue_noncommercial_license"]
+        );
+        assert_eq!(profile.capabilities.voices.len(), 10);
+        assert!(catalog.pinned_plan(&profile.identity).is_ok());
     }
 
     #[test]
@@ -4917,10 +5078,11 @@ mod tests {
             .entries()
             .any(|p| p.capabilities.backend == "swift_coreml"));
         for p in catalog.entries() {
-            // App-only exactly when the app is the only runtime.
+            // App-only exactly when the app is the only runtime. Breeze runs
+            // on Swift MLX like Qwen3-TTS but has no server speech bridge.
             assert_eq!(
                 p.capabilities.http_api,
-                p.capabilities.backend != "swift_coreml",
+                p.capabilities.backend != "swift_coreml" && p.family != "breeze_tts",
                 "{}",
                 p.identity.alias
             );

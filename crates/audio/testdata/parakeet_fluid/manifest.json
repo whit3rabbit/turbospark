@@ -1,0 +1,106 @@
+{
+  "reference": "fluid_speech_mlx.py from FluidVoice-Labs/fluid-speech-pro-mlx at aeb1d4e43487586b15d86c0a1dd4511e1cf6b7a0, parakeet-mlx 0.7.0, mlx 0.32.5, 8-bit weights, float32 compute",
+  "model_revision": "aeb1d4e43487586b15d86c0a1dd4511e1cf6b7a0",
+  "weights": "model.8bit.safetensors",
+  "dtype": "float32",
+  "audio_source": "filler_488.npy",
+  "frames": 61,
+  "verbatim": {
+    "text": "Um, so uh I I think we we should, you know, go to the store tomorrow.",
+    "tokens": [
+      2693,
+      7877,
+      547,
+      1282,
+      380,
+      380,
+      4321,
+      750,
+      750,
+      3306,
+      1687,
+      7877,
+      1180,
+      2865,
+      7877,
+      1455,
+      366,
+      506,
+      405,
+      916,
+      1574,
+      294,
+      5804,
+      7883
+    ]
+  },
+  "clean": {
+    "text": "So I think we should go to the store tomorrow.",
+    "tokens": [
+      1960,
+      380,
+      4321,
+      750,
+      3306,
+      1687,
+      1455,
+      366,
+      506,
+      405,
+      916,
+      1574,
+      294,
+      5804,
+      7883
+    ]
+  },
+  "files": {
+    "samples.npy": {
+      "shape": [
+        78160
+      ],
+      "dtype": "float32",
+      "sha256": "79c1e409c06ae8ce9b61dd765d3090f25ac42af2d92b00ad65b700fe9601b8e0"
+    },
+    "mel.npy": {
+      "shape": [
+        489,
+        128
+      ],
+      "dtype": "float32",
+      "sha256": "adffc18031c4f2b736c399451826bbe133514f24f4dcd262270eaf70a9a0bd1d"
+    },
+    "cleaner_in.npy": {
+      "shape": [
+        62,
+        1024
+      ],
+      "dtype": "float32",
+      "sha256": "f3081b67d2d2652c4f6c7accd572d4ede85ec45982f52ad0c023fb85bc2d13a9"
+    },
+    "cleaner_out.npy": {
+      "shape": [
+        62,
+        1024
+      ],
+      "dtype": "float32",
+      "sha256": "f983b53d28cdad04f45fb6a8efbda09ab7214a7a41bce3ef09af1c33a472c4e7"
+    },
+    "encoder_verbatim.npy": {
+      "shape": [
+        61,
+        1024
+      ],
+      "dtype": "float32",
+      "sha256": "c7e03d25b211b69465060a06f9ead01a1869b8de7be0cb6b5c8f37e21e1d7901"
+    },
+    "encoder_clean.npy": {
+      "shape": [
+        61,
+        1024
+      ],
+      "dtype": "float32",
+      "sha256": "e9b10f980405cff678ee222e939ae67fb5f28b791b623adfa28529d73d56a13b"
+    }
+  }
+}

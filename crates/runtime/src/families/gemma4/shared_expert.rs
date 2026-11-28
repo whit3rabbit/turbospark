@@ -338,7 +338,10 @@ impl RealForwardRunner {
             RMS_EPS,
         )
         .map_err(gpu_err)?;
-        Ok(shared_pass.commit().waiting_on_drop())
+        Ok(shared_pass
+            .commit_checked()
+            .map_err(RealForwardError::Gpu)?
+            .waiting_on_drop())
     }
 
     /// The same branch for ALL `m` tokens of a prefill micro-batch, in one
@@ -446,6 +449,9 @@ impl RealForwardRunner {
             )
             .map_err(gpu_err)?;
         }
-        Ok(shared_pass.commit().waiting_on_drop())
+        Ok(shared_pass
+            .commit_checked()
+            .map_err(RealForwardError::Gpu)?
+            .waiting_on_drop())
     }
 }

@@ -273,7 +273,8 @@ extension AudioWorkspaceController {
                 guard admitted else { throw CancellationError() }
                 let session = try await self.residentSession(for: profile, source: item)
                 let pcm = try await Task.detached { try AudioMediaIO.readMono16k(item.clips, store: assets, start: offset, duration: duration, cancel: lifetime.check) }.value
-                let result = try await session.execute(Self.request(from: item.recipe, task: .speechToText), pcm: pcm)
+                let result = try await session.execute(Self.transcriptionRequest(Self.request(from: item.recipe, task: .speechToText),
+                                                                                 family: profile.family, clean: self.cleanTranscripts), pcm: pcm)
                 try Task.checkCancellation()
                 guard self.valid(token) else { return }
                 if let transcript = result.transcript {
@@ -326,7 +327,9 @@ extension AudioWorkspaceController {
                     transcription = try await self.transcribeWithAppleSpeech(item: item, into: id, source: .final, token: token)
                 } else {
                     let session = try await self.residentSession(for: profile, source: item)
-                    transcription = try await self.transcribe(item: item, into: id, session: session, request: Self.request(from: item.recipe, task: .speechToText), source: .final, token: token)
+                    let request = Self.transcriptionRequest(Self.request(from: item.recipe, task: .speechToText),
+                                                            family: profile.family, clean: self.cleanTranscripts)
+                    transcription = try await self.transcribe(item: item, into: id, session: session, request: request, source: .final, token: token)
                 }
                 guard self.valid(token) else { return }
                 // Speaker labels are extra: the transcript is already saved,

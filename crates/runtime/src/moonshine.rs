@@ -942,7 +942,9 @@ impl MoonshineMetalEngine {
                 autorelease_pool(|| -> Result<(), String> {
                     let pass = self.context.borrow_mut().begin_pass();
                     self.encode_frontend(&pass, &work, samples.len(), seq)?;
-                    pass.commit_and_wait();
+                    pass.commit_checked()
+                        .map_err(|error| error.to_string())?
+                        .wait();
                     Ok(())
                 })?;
                 frontend_ms = started.elapsed().as_secs_f64() * 1_000.0;
@@ -950,7 +952,9 @@ impl MoonshineMetalEngine {
                 autorelease_pool(|| -> Result<(), String> {
                     let pass = self.context.borrow_mut().begin_pass();
                     self.encode_transformer(&pass, &work, seq, &cos, &sin)?;
-                    pass.commit_and_wait();
+                    pass.commit_checked()
+                        .map_err(|error| error.to_string())?
+                        .wait();
                     Ok(())
                 })?;
                 encoder_ms = started.elapsed().as_secs_f64() * 1_000.0;
@@ -958,7 +962,9 @@ impl MoonshineMetalEngine {
                 autorelease_pool(|| -> Result<(), String> {
                     let pass = self.context.borrow_mut().begin_pass();
                     self.build_cross_caches(&pass, &work, seq)?;
-                    pass.commit_and_wait();
+                    pass.commit_checked()
+                        .map_err(|error| error.to_string())?
+                        .wait();
                     Ok(())
                 })?;
                 cross_ms = started.elapsed().as_secs_f64() * 1_000.0;
@@ -968,7 +974,9 @@ impl MoonshineMetalEngine {
                     self.encode_frontend(&pass, &work, samples.len(), seq)?;
                     self.encode_transformer(&pass, &work, seq, &cos, &sin)?;
                     self.build_cross_caches(&pass, &work, seq)?;
-                    pass.commit_and_wait();
+                    pass.commit_checked()
+                        .map_err(|error| error.to_string())?
+                        .wait();
                     Ok(())
                 })?;
             }
@@ -979,7 +987,9 @@ impl MoonshineMetalEngine {
                 autorelease_pool(|| -> Result<(), String> {
                     let pass = self.context.borrow_mut().begin_pass();
                     self.decode_step(&pass, &mut work, token, pos, seq)?;
-                    pass.commit_and_wait();
+                    pass.commit_checked()
+                        .map_err(|error| error.to_string())?
+                        .wait();
                     Ok(())
                 })?;
                 let logits = read_f32_buffer(&work.logits, self.config.vocab_size);

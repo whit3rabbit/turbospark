@@ -555,6 +555,10 @@ impl RealChatModel {
                 marker,
                 fill,
             })
+        } else if runner.inkling2_image_ids().is_some() {
+            Some(crate::vision::VisionInfo::Inkling2 {
+                max_tokens: turbospark_vision_io::INKLING2_MAX_TOKENS,
+            })
         } else if runner.idefics3_image_ids().is_some() {
             // No server splice for the Idefics3 / SmolVLM prompt layout yet,
             // so images are refused rather than run through another tower's.
@@ -696,6 +700,20 @@ impl RealChatModel {
                 }
                 runner
                     .set_prompt_vision_gemma4(&rows, spans, prompt_ids.len())
+                    .map_err(|e| RuntimeError::Producer(e.to_string()))?;
+            }
+            crate::vision::RequestImages::Inkling2 { images, spans } => {
+                let mut rows = Vec::with_capacity(images.len());
+                for (i, image) in images.iter().enumerate() {
+                    rows.push(
+                        runner
+                            .encode_image_inkling2(image)
+                            .map_err(|e| RuntimeError::Producer(format!("image {i}: {e}")))?
+                            .rows,
+                    );
+                }
+                runner
+                    .set_prompt_vision_flat(&rows, spans, prompt_ids.len())
                     .map_err(|e| RuntimeError::Producer(e.to_string()))?;
             }
             crate::vision::RequestImages::Clip { images, spans } => {

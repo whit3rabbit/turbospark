@@ -613,7 +613,7 @@ impl DsparkState {
             h as u32,
         )
         .map_err(g)?;
-        pass.commit_and_wait();
+        pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
         let head = DRAFT_HEAD;
         let pass = context.begin_pass_labeled("dspark fold head");
         let mut j = 0;
@@ -647,7 +647,7 @@ impl DsparkState {
             (&m.fold_b, 0, vocab as u32),
             1,
         )?;
-        pass.commit_and_wait();
+        pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
         Ok(())
     }
 
@@ -933,7 +933,7 @@ impl RealForwardRunner {
         }
         let pass = self.context.begin_pass_labeled("dspark sync");
         self.dspark_write_context(&pass, ctx_rows, base)?;
-        pass.commit_and_wait();
+        pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
         self.real_inkling2
             .as_mut()
             .and_then(|s| s.dspark.as_mut())
@@ -955,10 +955,16 @@ impl RealForwardRunner {
                 self.install_dir.display()
             ));
         }
-        if self.prompt_vision.is_some() || self.arch.vision.is_active() {
+        // Only a prompt that CARRIES an image is refused. An attached tower
+        // (`arch.vision.is_active()`) on a text turn speculates as before:
+        // refusing on the tower alone would cost every text turn of a session
+        // that once saw a picture its drafter. With an image, the drafter's
+        // context and prompt-copy drafting have not been gated against image
+        // rows (`docs/INKLING2_VISION_PHASE0.md`), so the turn runs plain.
+        if self.prompt_vision.is_some() {
             return Some(
-                "the Inkling 2 verify embeds every row from the token table; image prompts \
-                 are not served"
+                "Inkling 2 speculation is not gated with image rows in the prompt; this \
+                 image turn decodes without a drafter"
                     .to_string(),
             );
         }
@@ -1030,7 +1036,7 @@ impl RealForwardRunner {
                     d.dflash2_context_rows(head, ctx, pass, (&buf, off), p, n)?;
                 }
                 Head::Markov(m) => {
-                    for l in 0..c.layers {
+                    for (l, &alpha) in m.alpha.iter().take(c.layers).enumerate() {
                         let lp = |s: &str| format!("layers.{l}.{s}");
                         gpu::encode_dspark_tap_mix_norm(
                             ctx,
@@ -1038,7 +1044,7 @@ impl RealForwardRunner {
                             (&buf, off),
                             d.wv(&lp("dflare_norm.weight")),
                             (&d.cmix, 0),
-                            m.alpha[l],
+                            alpha,
                             h as u32,
                             ts,
                             c.eps,
@@ -1111,7 +1117,7 @@ impl RealForwardRunner {
         }
         let pass = self.context.begin_pass_labeled("dspark prime");
         self.dspark_write_context(&pass, position, position + 1)?;
-        pass.commit_and_wait();
+        pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
         self.real_inkling2
             .as_mut()
             .and_then(|s| s.dspark.as_mut())
@@ -1384,7 +1390,7 @@ impl RealForwardRunner {
             )
             .map_err(g)?;
         }
-        pass.commit_and_wait();
+        pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
         // The proposals are u32 token ids; read the words and reinterpret.
         let out: Vec<i32> = gpu::read_f32_buffer_at(&m.proposals, 0, b - 1)
             .into_iter()

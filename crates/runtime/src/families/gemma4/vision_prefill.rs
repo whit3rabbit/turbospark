@@ -221,7 +221,7 @@ impl RealForwardRunner {
                     self.encode_gemma4_dense_ffn_batched(&pass, layer, hidden, inter, use_silu, n)?;
                 } else {
                     // The routing reads the router logits on the host.
-                    pass.commit_and_wait();
+                    pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
                     self.retire_routed(&mut pending_routed);
                     self.encode_gemma4_routed_half_per_token(layer, n, banks, &mut pending_routed)?;
                     // Queue order puts this pass after the routed passes.
@@ -273,7 +273,7 @@ impl RealForwardRunner {
             }
             self.encode_gemma4_head_at(&pass, (&span_x, row(r)))?;
         }
-        pass.commit_and_wait();
+        pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
         self.kv.advance_by(len);
         self.phases.calls += len as u64;
         self.phases.total_nanos += started.elapsed().as_nanos() as u64;
