@@ -3012,6 +3012,82 @@
         "voices": [],
         "max_input_seconds": 326
       }
+    },
+    {
+      "alias": "ace-step15-turbo",
+      "source": {
+        "repository": "ACE-Step/Ace-Step1.5",
+        "revision": "19671f406d603126926c1b7e2adc169acbcade22"
+      },
+      "metadata": {
+        "task": "music",
+        "family": "ace_step15",
+        "display_name": "ACE-Step 1.5 Turbo",
+        "required_files": [
+          "README.md",
+          "acestep-v15-turbo/config.json",
+          "acestep-v15-turbo/model.safetensors",
+          "acestep-v15-turbo/silence_latent.pt",
+          "vae/config.json",
+          "vae/diffusion_pytorch_model.safetensors",
+          "Qwen3-Embedding-0.6B/config.json",
+          "Qwen3-Embedding-0.6B/model.safetensors",
+          "Qwen3-Embedding-0.6B/tokenizer.json"
+        ],
+        "sample_rate": 48000,
+        "channels": 2,
+        "languages": [],
+        "voices": [],
+        "max_input_seconds": 600,
+        "acknowledgments": []
+      },
+      "assets": [
+        {
+          "path": "README.md",
+          "size": 5496,
+          "sha256": "69d69b89e313706b93b420b13aa6232259b207a1cd19b0b70358d166e8e451a0"
+        },
+        {
+          "path": "acestep-v15-turbo/config.json",
+          "size": 1968,
+          "sha256": "74745ff704ea49164c3d2d1c99fc0670f3fc635a869f0aec2d1311e6a52d400a"
+        },
+        {
+          "path": "acestep-v15-turbo/model.safetensors",
+          "size": 4787825604,
+          "sha256": "3f6e0797fad420a39bd33979eb6e840e30989e34a3794e843d23b60ec6e422d7"
+        },
+        {
+          "path": "acestep-v15-turbo/silence_latent.pt",
+          "size": 3841215,
+          "sha256": "a778e9dd942f5e8b2c09c55370782d318834432b03dabbcdf70e6ed49ad6358b"
+        },
+        {
+          "path": "vae/config.json",
+          "size": 425,
+          "sha256": "14e019904df567f26df750317a70e2bd08f9f8f3c40ff4a24c97d1cd3f20ccd2"
+        },
+        {
+          "path": "vae/diffusion_pytorch_model.safetensors",
+          "size": 337431388,
+          "sha256": "da17edb604c40deaf09e9b24974e590d1ca83a374070e5d0884cfa4bed9a99b0"
+        },
+        {
+          "path": "Qwen3-Embedding-0.6B/config.json",
+          "size": 1359,
+          "sha256": "bb23c1607cfe059a58d8f0196cf1cebb52082b1056b8e358a579da80a5759420"
+        },
+        {
+          "path": "Qwen3-Embedding-0.6B/model.safetensors",
+          "size": 1191586416,
+          "sha256": "0437e45c94563b09e13cb7a64478fc406947a93cb34a7e05870fc8dcd48e23fd"
+        },
+        {
+          "path": "Qwen3-Embedding-0.6B/tokenizer.json",
+          "size": 11423705,
+          "sha256": "def76fb086971c7867b829c23a26261e38d9d74e02139253b38aeb9df8b4b50a"
+        }
+      ]
     }
   ]
 }

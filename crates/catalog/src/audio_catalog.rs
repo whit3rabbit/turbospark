@@ -667,6 +667,7 @@ impl AudioCatalog {
                 }
                 AudioTask::SpeechToText => (weight_bytes.saturating_mul(2).saturating_add(16_000*1800*4).saturating_add(256<<20),"estimate: twice checkpoint weights, 30-minute PCM, and 256 MiB working reserve"),
                 AudioTask::TextToSpeech => (weight_bytes.saturating_mul(2).saturating_add(256<<20),"estimate: twice checkpoint weights and 256 MiB voice/working reserve"),
+                AudioTask::Music if family == "ace_step15" => (weight_bytes.saturating_add(9<<29),"estimate: checkpoint weights plus 4.5 GiB for f32 widening, device copies and one song; measured 10.1 GiB footprint after a 10 s song on M4 Max, longer songs unqualified"),
                 AudioTask::Music => (weight_bytes.saturating_add(2<<30),"estimate: packed checkpoint weights and 2 GiB working reserve; full duration peak unqualified"),
                 _ => (weight_bytes.saturating_mul(4),"estimate: runtime admission pending"),
             };
@@ -2107,6 +2108,7 @@ fn require_library_audio_dirs(root: &Path, path: &Path) -> Result<(), String> {
 /// Families whose generic catalog rows may run: a runtime adapter for them
 /// exists and was reviewed. Every other new row stays closed.
 const REVIEWED_ADAPTERS: &[&str] = &[
+    "ace_step15",
     "fish_drama3",
     "fluid_speech_pro",
     "megatts3",
@@ -2423,13 +2425,16 @@ fn profile_capabilities(family: &str) -> AudioCapabilities {
         "qwen3_tts" => ("synthesize","swift_mlx","decode_step",false,Some("Qwen3-TTS runs through the native Swift MLX provider; the Rust session API does not execute this family"),None),
         "kokoro" => ("synthesize","portable_cpu","sentence",false,Some("Kokoro Metal runtime is pending; CPU reference is available only with explicit portable opt-in"),None),
         "minimax_music3" => ("generate_music","metal","compute_operation",true,None,None),
+        "ace_step15" => ("generate_music","metal","compute_operation",true,None,None),
         _ => ("inspect","unavailable","unavailable",false,Some("No native workspace runtime adapter is available"),None),
     };
     AudioCapabilities {
         languages: vec![],
         voices: vec![],
         max_input_seconds: None,
-        supports_lyrics: false,
+        // Metadata rows take their capabilities from here; ACE-Step reads
+        // lyrics, Music 3 sets its own in its alias arms.
+        supports_lyrics: family == "ace_step15",
         operations: vec![operation.into()],
         timing: timing.map(str::to_string),
         backend: backend.into(),
@@ -3590,7 +3595,7 @@ mod tests {
     #[test]
     fn initial_audio_profiles_have_exact_complete_pins_and_wire_metadata() {
         let catalog = AudioCatalog::embedded().unwrap();
-        assert_eq!(catalog.entries().count(), 29);
+        assert_eq!(catalog.entries().count(), 30);
         for (task, alias, repo, revision, rate, channels) in [
             (
                 AudioTask::TextToSpeech,
@@ -3630,6 +3635,14 @@ mod tests {
                 "mlx-community/MiniMax-Music3-4bit",
                 "c7ea32923b245fe5afc22d740a1936ad2ac590f3",
                 44100,
+                2,
+            ),
+            (
+                AudioTask::Music,
+                "ace-step15-turbo",
+                "ACE-Step/Ace-Step1.5",
+                "19671f406d603126926c1b7e2adc169acbcade22",
+                48000,
                 2,
             ),
             (

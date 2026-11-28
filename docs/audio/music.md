@@ -28,3 +28,13 @@ Music generation models in TurboSpark produce polyphonic musical compositions an
 - **Numeric Contracts**:
   - Bit-exact RNG reproduction of MLX keys, splits, and uniforms.
   - Audio output: 44.1 kHz, stereo (2 channels).
+
+### ACE-Step 1.5 Turbo (`ace_step15`)
+
+- **In-Crate Directory**: [`crates/audio/src/music/ace_step15/`](../../crates/audio/src/music/ace_step15/)
+- **Documentation**: [`crates/audio/src/music/ace_step15/README.md`](../../crates/audio/src/music/ace_step15/README.md) (pins, parity gates, pitfalls) and [`DEVIATIONS.md`](../../crates/audio/src/music/ace_step15/DEVIATIONS.md)
+- **Upstream**: [`ACE-Step/ACE-Step-1.5`](https://github.com/ACE-Step/ACE-Step-1.5) at `ca1e85fe`, checkpoint `ACE-Step/Ace-Step1.5` at `19671f40` (MIT)
+- **Architecture**: Qwen3-Embedding-0.6B caption encoder and lyric embeddings, lyric and timbre encoders, a 24-layer flow-matching DiT (hidden 2048, GQA 16/8, alternating 128-patch sliding and full attention, AdaLN) over 25 Hz latents, an 8-step turbo Euler schedule at shift 3 with upstream's DCW wavelet correction, and the Oobleck VAE (48 kHz stereo). Cover (restyle) hints come from a 5 Hz FSQ round trip of the source latents.
+- **Surfaces**: catalog `ace-step15-turbo` (`turbospark-model pull-audio`), `turbospark-music generate`, and audio music sessions (runtime family `ace_step15`). Text2music only so far; cover source audio, repaint and the Swift Music page are not wired.
+- **Numeric Contracts**: every stage matches the upstream PyTorch reference on the real checkpoint within 2e-5 relative on CPU and Metal; the end-to-end waveform matches an upstream-path render from the same noise (DCW audio within 3e-4, see the README for why). The initial noise is not torch's generator, so a seed gives a different song than upstream.
+- **Indicative timing** (M4 Max, loaded host, not a frozen row): 30 s of audio in about 19 s through the CLI.

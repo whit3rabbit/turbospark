@@ -1,4 +1,5 @@
-//! `turbospark-music`: the MiniMax Music 3 generation command.
+//! `turbospark-music`: the music generation command (MiniMax Music 3 and
+//! ACE-Step 1.5 Turbo, chosen by what the model directory holds).
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -11,18 +12,25 @@ use audio::Waveform;
 use catalog::Store;
 
 const USAGE: &str = "\
-turbospark-music: generate MiniMax Music 3 audio
+turbospark-music: generate music (MiniMax Music 3 or ACE-Step 1.5 Turbo)
 
 USAGE:
     turbospark-music generate --model ALIAS_OR_DIR --caption TEXT \\
         (--lyrics TEXT | --lyrics-file PATH) --output WAV \\
         [--duration SECONDS] [--steps N] [--seed N] [--precision checkpoint|float32] \\
-        [--wav-format pcm16|float32] [--timings] \\
+        [--wav-format pcm16|float32] [--timings] [--language CODE] \\
         [--flow-profile fast|exact|turbo] [--flow-uncond-interval N] \\
         [--flow-uncond-warmup N] [--flow-solver euler|ab2]
 
-The model must be a pinned MiniMax Music 3 profile installed by
-`turbospark-model pull-audio`, or a local converted model directory.
+The model must be a pinned music profile installed by
+`turbospark-model pull-audio` (minimax-music3-*, ace-step15-turbo), or a
+local model directory.
+
+ACE-Step 1.5 Turbo (48 kHz stereo, Metal): --duration is required (up to
+600 s), --language sets the vocal language code (default en), and the
+schedule is fixed at 8 steps with upstream's DCW correction. The Music 3
+options (--precision, --flow-*, --steps other than 8) are refused for it.
+The rest of this text describes MiniMax Music 3 (44.1 kHz stereo).
 Lyrics are required. Use `[instrumental]` explicitly for instrumental output.
 --wav-format pcm16 (default) rounds to 16-bit integers; float32 writes the
 generated samples unrounded. --timings prints per-stage wall time and the
@@ -55,6 +63,10 @@ struct GenerateOptions {
     flow_uncond_interval: Option<usize>,
     flow_uncond_warmup: Option<usize>,
     flow_solver: Option<FlowSolver>,
+    /// Whether --precision was given (ACE-Step refuses it).
+    precision_explicit: bool,
+    /// ACE-Step vocal language code; Music 3 refuses it.
+    language: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,6 +125,7 @@ fn parse_args(args: &[String]) -> Result<GenerateOptions, Error> {
     let mut uncond_interval = None;
     let mut uncond_warmup = None;
     let mut flow_solver = None;
+    let mut language = None;
     let mut index = 1usize;
     while index < args.len() {
         let flag = args[index].as_str();
@@ -218,6 +231,7 @@ fn parse_args(args: &[String]) -> Result<GenerateOptions, Error> {
                 set_once(&mut flow_solver, selected, flag)?;
             }
             "--output" => set_once(&mut output, PathBuf::from(value()?), flag)?,
+            "--language" => set_once(&mut language, value()?.to_string(), flag)?,
             "--help" | "-h" => return Err(Error::Usage(USAGE.to_string())),
             other if other.starts_with('-') => {
                 return Err(Error::Usage(format!("unknown option {other:?}")))
@@ -255,15 +269,27 @@ fn parse_args(args: &[String]) -> Result<GenerateOptions, Error> {
         flow_uncond_interval: uncond_interval,
         flow_uncond_warmup: uncond_warmup,
         flow_solver,
+        precision_explicit: precision.is_some(),
+        language,
     };
     if options.flow_uncond_interval == Some(0) {
         return Err(Error::Usage(
             "--flow-uncond-interval must be at least 1".to_string(),
         ));
     }
-    text_request(&options)
-        .validate()
-        .map_err(|error| Error::Usage(error.to_string()))?;
+    // Family-specific bounds are checked once the model is known; these
+    // hold for every music model.
+    if options
+        .duration
+        .is_some_and(|d| !(d.is_finite() && d > 0.0))
+    {
+        return Err(Error::Usage(
+            "--duration must be a positive number".to_string(),
+        ));
+    }
+    if options.steps == Some(0) {
+        return Err(Error::Usage("--steps must be at least 1".to_string()));
+    }
     if options.output.as_os_str().is_empty() {
         return Err(Error::Usage("--output cannot be empty".to_string()));
     }
@@ -327,7 +353,19 @@ fn is_tiny_fixture(path: &Path) -> Result<bool, Error> {
 
 fn generate_to_file(store: &Store, options: &GenerateOptions) -> Result<(), Error> {
     let model_path = resolve_audio_model(store, &options.model)?;
+    #[cfg(target_os = "macos")]
+    if runtime::ace_step15::detect(&model_path) {
+        return generate_ace(&model_path, options);
+    }
+    if options.language.is_some() {
+        return Err(Error::Usage(
+            "--language is an ACE-Step setting; MiniMax Music 3 does not take it".to_string(),
+        ));
+    }
     let request = text_request(options);
+    request
+        .validate()
+        .map_err(|error| Error::Usage(error.to_string()))?;
     let (generated, timings) = if is_tiny_fixture(&model_path)? {
         Model::load_converted_with_precision(&model_path, options.precision)
             .and_then(|model| {
@@ -362,6 +400,115 @@ fn generate_to_file(store: &Store, options: &GenerateOptions) -> Result<(), Erro
         "wrote {} samples at {} Hz, stereo, to {}",
         generated.samples,
         generated.sample_rate,
+        options.output.display()
+    );
+    Ok(())
+}
+
+/// The Music 3 flags ACE-Step would otherwise ignore, which would look
+/// like they worked.
+fn ace_refusals(options: &GenerateOptions) -> Result<(), Error> {
+    let music3_only = [
+        (options.precision_explicit, "--precision"),
+        (options.flow_profile.is_some(), "--flow-profile"),
+        (
+            options.flow_uncond_interval.is_some(),
+            "--flow-uncond-interval",
+        ),
+        (options.flow_uncond_warmup.is_some(), "--flow-uncond-warmup"),
+        (options.flow_solver.is_some(), "--flow-solver"),
+    ];
+    if let Some((_, flag)) = music3_only.iter().find(|(set, _)| *set) {
+        return Err(Error::Usage(format!(
+            "{flag} is a MiniMax Music 3 option; ACE-Step does not take it"
+        )));
+    }
+    if options.steps.is_some_and(|s| s != 8) {
+        return Err(Error::Usage(
+            "ACE-Step Turbo runs a fixed 8-step schedule; leave --steps unset or 8".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn generate_ace(path: &Path, options: &GenerateOptions) -> Result<(), Error> {
+    use audio::music::ace_step15::Stage;
+    ace_refusals(options)?;
+    let duration = options
+        .duration
+        .ok_or_else(|| Error::Usage("ACE-Step needs --duration SECONDS (up to 600)".to_string()))?;
+    if duration > audio::music::ace_step15::pipeline::MAX_DURATION_SECONDS {
+        return Err(Error::Usage(format!(
+            "--duration {duration} exceeds ACE-Step's {} s",
+            audio::music::ace_step15::pipeline::MAX_DURATION_SECONDS
+        )));
+    }
+    let language = options.language.as_deref().unwrap_or("en");
+    if language.is_empty()
+        || language.len() > 16
+        || !language
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    {
+        return Err(Error::Usage(
+            "--language must be a short code such as en, zh or ja".to_string(),
+        ));
+    }
+    let started = std::time::Instant::now();
+    let mut runner =
+        runtime::ace_step15::AceStep15Runner::open(path, runtime::ace_step15::Device::Metal)
+            .map_err(|error| Error::Failed(error.to_string()))?;
+    let loaded = started.elapsed();
+    let request = runtime::ace_step15::Request {
+        caption: &options.caption,
+        lyrics: &options.lyrics,
+        language,
+        duration_seconds: duration,
+        seed: options.seed.unwrap_or(0),
+    };
+    let started = std::time::Instant::now();
+    let rendered = runner
+        .generate(&request, |stage| {
+            if let Stage::Step { index, total } = stage {
+                eprintln!("[ace-step] step {}/{total}", index + 1);
+            }
+            true
+        })
+        .map_err(|error| Error::Failed(error.to_string()))?
+        .ok_or_else(|| Error::Failed("ACE-Step generation stopped".to_string()))?;
+    let elapsed = started.elapsed();
+    if rendered.caption_truncated || rendered.lyrics_truncated {
+        eprintln!(
+            "note: the {} was cut to ACE-Step's token limit (256 caption, 2048 lyric tokens)",
+            if rendered.caption_truncated {
+                "caption"
+            } else {
+                "lyrics"
+            }
+        );
+    }
+    let samples = rendered.interleaved.len() / 2;
+    let waveform = Waveform::new(rendered.sample_rate, 2, rendered.interleaved)
+        .map_err(|error| Error::Failed(error.to_string()))?;
+    let encoded = match options.wav_format {
+        WavFormat::Pcm16 => audio::write_wav_i16(&waveform),
+        WavFormat::Float32 => audio::write_wav_f32(&waveform),
+    };
+    std::fs::write(&options.output, encoded)
+        .map_err(|error| Error::Failed(format!("writing {}: {error}", options.output.display())))?;
+    if options.timings {
+        let audio_seconds = samples as f64 / f64::from(rendered.sample_rate);
+        eprintln!(
+            "timings: load {:.1} s, generate {:.1} s for {audio_seconds:.2} s of audio (RTF {:.2})",
+            loaded.as_secs_f64(),
+            elapsed.as_secs_f64(),
+            elapsed.as_secs_f64() / audio_seconds
+        );
+    }
+    println!(
+        "wrote {samples} samples at {} Hz, stereo, to {}",
+        rendered.sample_rate,
         options.output.display()
     );
     Ok(())
@@ -732,5 +879,40 @@ mod tests {
         assert_eq!(decoded.channels, 2);
         assert!(!decoded.samples.is_empty());
         std::fs::remove_file(output).unwrap();
+    }
+
+    #[test]
+    fn language_parses_and_ace_refuses_music3_options() {
+        let mut args = base_args("ace".to_string());
+        // base_args carries --steps 1, a Music 3 value; ACE needs 8 or none.
+        let at = args.iter().position(|a| a == "--steps").unwrap();
+        args.drain(at..at + 2);
+        args.extend(["--language".to_string(), "zh".to_string()]);
+        let options = parse_args(&args).unwrap();
+        assert_eq!(options.language.as_deref(), Some("zh"));
+        assert!(!options.precision_explicit);
+        assert!(ace_refusals(&options).is_ok());
+        for extra in [
+            vec!["--precision", "float32"],
+            vec!["--flow-profile", "exact"],
+            vec!["--flow-uncond-interval", "2"],
+            vec!["--flow-uncond-warmup", "1"],
+            vec!["--flow-solver", "ab2"],
+            vec!["--steps", "30"],
+        ] {
+            let mut with = args.clone();
+            with.extend(extra.iter().map(|v| v.to_string()));
+            let parsed = parse_args(&with).unwrap();
+            assert!(
+                ace_refusals(&parsed).is_err(),
+                "{extra:?} should be refused for ACE"
+            );
+        }
+        let mut eight = args.clone();
+        eight.extend(["--steps".to_string(), "8".to_string()]);
+        assert!(ace_refusals(&parse_args(&eight).unwrap()).is_ok());
+        let mut twice = args.clone();
+        twice.extend(["--language".to_string(), "en".to_string()]);
+        assert!(parse_args(&twice).is_err());
     }
 }

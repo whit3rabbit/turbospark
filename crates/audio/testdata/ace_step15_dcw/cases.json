@@ -1,0 +1,107 @@
+{
+ "generator": "tools/gen_ace_step15_dcw_fixtures.py",
+ "upstream_commit": "ca1e85fe9430179831e6bc6be790c332190a3866",
+ "pytorch_wavelets": "1.3.0",
+ "pywt": "1.8.0",
+ "torch": "2.15.0",
+ "cases": [
+  {
+   "name": "double_even",
+   "mode": "double",
+   "scaler": 0.05,
+   "high_scaler": 0.02,
+   "t": 0.9,
+   "frames": 16,
+   "channels": 4
+  },
+  {
+   "name": "double_odd",
+   "mode": "double",
+   "scaler": 0.05,
+   "high_scaler": 0.02,
+   "t": 0.5,
+   "frames": 13,
+   "channels": 4
+  },
+  {
+   "name": "double_t1",
+   "mode": "double",
+   "scaler": 0.05,
+   "high_scaler": 0.02,
+   "t": 1.0,
+   "frames": 10,
+   "channels": 3
+  },
+  {
+   "name": "double_last",
+   "mode": "double",
+   "scaler": 0.05,
+   "high_scaler": 0.02,
+   "t": 0.3,
+   "frames": 9,
+   "channels": 5
+  },
+  {
+   "name": "low_odd",
+   "mode": "low",
+   "scaler": 0.1,
+   "high_scaler": 0.0,
+   "t": 0.75,
+   "frames": 11,
+   "channels": 4
+  },
+  {
+   "name": "high_even",
+   "mode": "high",
+   "scaler": 0.1,
+   "high_scaler": 0.0,
+   "t": 0.25,
+   "frames": 12,
+   "channels": 4
+  },
+  {
+   "name": "pix",
+   "mode": "pix",
+   "scaler": 0.07,
+   "high_scaler": 0.0,
+   "t": 0.6,
+   "frames": 7,
+   "channels": 3
+  },
+  {
+   "name": "double_strong",
+   "mode": "double",
+   "scaler": 0.5,
+   "high_scaler": 0.3,
+   "t": 0.4,
+   "frames": 15,
+   "channels": 6
+  }
+ ],
+ "files": {
+  "double_even_x.npy": "89c2e5d1a640fa348c28fafc6fee49835e9c85640e93e943d1b3784815bca503",
+  "double_even_y.npy": "9c69e9b8dd99d6999a37d105d2156e8d1b9a6b26be810dc01b99c9918b5eaa2f",
+  "double_even_out.npy": "e9e40709ffee4902237695cea994abb37245876b8bec20a5bf8c270b08929d0b",
+  "double_odd_x.npy": "b375068f83057be994fa0324f1cf73960d364f5158fab28b0a25627d5f89ba39",
+  "double_odd_y.npy": "d2a1eed2cf65630d89f765792de192f7e16b2628a7c77347fc7a0d8dd900a7f5",
+  "double_odd_out.npy": "0433aa7b97512df398536488b6137f14b0d054921b7eb2b268204f9e4891db93",
+  "double_t1_x.npy": "065a0447c252e7db3c60cf9044528f6a700ed0c261a6524f9a7a1c717d1d5430",
+  "double_t1_y.npy": "63ff6ce0a32c797a7d81ece3bd0dfc05425134d7acd1567c6f15f708d46d2afa",
+  "double_t1_out.npy": "726e8877f07cb766d030d5941996dbc7f77e73e951af20f24853436137ab7a2b",
+  "double_last_x.npy": "9f49953b942b7ce4dc6304357dc63e12cba8f261d34c0c260cca343490c11001",
+  "double_last_y.npy": "c922ff026ad38f37527cc99940e4690f653a2abb7ea3302a8e22b6b9ed84a549",
+  "double_last_out.npy": "f162d99febfde6af070a9c4e07dc2e4c52b87a38e9ce1936849889ada4ede0d9",
+  "low_odd_x.npy": "3803f04f4b5df9311d758bebd5beb3f067a2dcf0df0e253458e0508c786a203c",
+  "low_odd_y.npy": "80a65b7b2756802add4763e8cbbcc77fb180ab58db1ce8379efdd5edb50e0f06",
+  "low_odd_out.npy": "a2399fed6a9005027d0d27f5610fd1eaa1f5c74851e05a72f01ec7a66da53eac",
+  "high_even_x.npy": "3bd708190fc9b86c5d5d51e1670acfcbd7aca187fa28278198d277cdb606a05e",
+  "high_even_y.npy": "46bc1a56c8112cda81ecf22492d5b529f96a844e981e0cf7a605a5c8aeec5942",
+  "high_even_out.npy": "3719aa526dc0f110659461df89a54eac1bb9dbe2bb336fa9e4ecfdda6cf73872",
+  "pix_x.npy": "f257d4ec5400e818252eab3369ee6242419af5983bc71d7706857398c0664390",
+  "pix_y.npy": "3beef1d84e5eb6a66cdbce151a5b6d8f947bcd99b61451ec1e053e7caaca9491",
+  "pix_out.npy": "43d84fc8b127cadb9cd6c840e50de2e3daeb66782106486b79760450e3975f37",
+  "double_strong_x.npy": "a484fbf73bd761e3432328185c8fec5f7fa5b7c52c4471dddd1f7401fd563e6b",
+  "double_strong_y.npy": "83154ac24685378ad9ee5a7e88c041d58efb7d1899af225091ebfada1ef48b46",
+  "double_strong_out.npy": "979c74bbe5197f562b03c3cc4efecc825a043f812f277660ff1eb579ee110347"
+ }
+}
