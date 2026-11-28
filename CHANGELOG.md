@@ -87,6 +87,14 @@ when this file gets updated relative to the version bump and the tag.
   large vocabularies and long contexts, with the same results.
 
 ### Changed
+- macOS app sidebar: visible groups (Chat, Humanize, API, Models, then Image
+  Generation and Audio, then Files) replace the "More" menu. "Installed" is now
+  "Models", with Discover inside it. Rows can be pinned, reordered and hidden,
+  and the layout can be reset.
+- macOS app Models workspace: an Installed | Discover switcher, search first in
+  both filter bars, one Filter button in place of the row of menus, shorter
+  rows, and Select mode with one confirmed bulk delete. Delete is also on row
+  hover, the context menu and the detail pane.
 - GGUF Q4_K tensors decode and verify through new wide-load kernels by default:
   1.5x to 1.9x the previous kernel's bandwidth on real Q4_K bytes, and 1.4x to
   2.4x for speculative verify. Output moves within a mean KL of about 1e-5 nats
@@ -113,6 +121,11 @@ when this file gets updated relative to the version bump and the tag.
   panicking the process. Device-fault handling is unchanged.
 
 ### Fixed
+- macOS app: Rewind's destructive button is no longer the default action, so
+  Return cannot drop conversation history.
+- macOS app UI audit: small controls have a 20 pt minimum hit target, toasts
+  wrap instead of truncating, dense models no longer show an MoE badge, and
+  Settings and Discover rows adapt to large text.
 - Qwen3-TTS streaming decode no longer adds the codec's transposed-conv
   bias twice at every chunk boundary (mlx-audio PR 1003), so streamed speech
   matches a one-call decode.
