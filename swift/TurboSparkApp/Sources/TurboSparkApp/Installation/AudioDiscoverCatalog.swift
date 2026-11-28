@@ -38,7 +38,9 @@ enum AudioDiscoverCatalog {
     private static let recommendedAliases: [(String, Group)] = [
         ("parakeet-unified-en-coreml", .liveText),
         ("parakeet-ultra-coreml", .finalTranscript),
+        ("fluid-speech-pro-coreml", .finalTranscript),
         ("parakeet-redux-coreml", .finalTranscript),
+        ("fluid-speech-pro-mlx-8bit", .finalTranscript),
         ("speaker-diarization-coreml", .speakers),
         (AudioWorkspaceController.defaultMusicProfileAlias, .music),
     ] + AudioWorkspaceController.curatedCloneAliases.map { ($0, Group.voiceCloning) }

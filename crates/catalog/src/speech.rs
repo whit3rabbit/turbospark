@@ -198,12 +198,44 @@ const PARAKEET_COREML_RUNTIME_FILES: [&str; 13] = [
     "JointDecisionv3.mlmodelc/weights/weight.bin",
 ];
 
+/// FluidVoice's Fluid Speech Pro export: the same programs with the joint
+/// named `JointDecision`. Kept in step with
+/// `runtime::coreml::parakeet::FLUID_REQUIRED_DIRS`.
+const PARAKEET_FLUID_JOINT: &str = "JointDecision.mlmodelc";
+const PARAKEET_FLUID_COREML_RUNTIME_FILES: [&str; 13] = [
+    "parakeet_vocab.json",
+    "Preprocessor.mlmodelc/coremldata.bin",
+    "Preprocessor.mlmodelc/model.mil",
+    "Preprocessor.mlmodelc/weights/weight.bin",
+    "Encoder.mlmodelc/coremldata.bin",
+    "Encoder.mlmodelc/model.mil",
+    "Encoder.mlmodelc/weights/weight.bin",
+    "Decoder.mlmodelc/coremldata.bin",
+    "Decoder.mlmodelc/model.mil",
+    "Decoder.mlmodelc/weights/weight.bin",
+    "JointDecision.mlmodelc/coremldata.bin",
+    "JointDecision.mlmodelc/model.mil",
+    "JointDecision.mlmodelc/weights/weight.bin",
+];
+
 /// The file set a family's runtime requires, before any per-entry extras.
-fn runtime_files(family: SpeechFamily) -> &'static [&'static str] {
+/// Parakeet has two joint program names; the Fluid set applies when the
+/// listed files (the pinned entry's assets, or a receipt) name its joint.
+fn runtime_files<'a>(
+    family: SpeechFamily,
+    listed: impl IntoIterator<Item = &'a str>,
+) -> &'static [&'static str] {
     match family {
         SpeechFamily::Whisper => &WHISPER_RUNTIME_FILES,
         SpeechFamily::Qwen3Asr => &QWEN3_ASR_RUNTIME_FILES,
-        SpeechFamily::ParakeetTdt => &PARAKEET_COREML_RUNTIME_FILES,
+        SpeechFamily::ParakeetTdt => {
+            let fluid_joint = format!("{PARAKEET_FLUID_JOINT}/");
+            if listed.into_iter().any(|f| f.starts_with(&fluid_joint)) {
+                &PARAKEET_FLUID_COREML_RUNTIME_FILES
+            } else {
+                &PARAKEET_COREML_RUNTIME_FILES
+            }
+        }
     }
 }
 
@@ -220,10 +252,11 @@ fn install_files(
     family: SpeechFamily,
     required_files: &[String],
 ) -> Result<BTreeSet<String>, String> {
-    let mut files: BTreeSet<String> = runtime_files(family)
-        .iter()
-        .map(|name| name.to_string())
-        .collect();
+    let mut files: BTreeSet<String> =
+        runtime_files(family, required_files.iter().map(String::as_str))
+            .iter()
+            .map(|name| name.to_string())
+            .collect();
     for file in required_files {
         if file.is_empty()
             || !Path::new(file)
@@ -243,9 +276,14 @@ fn install_files(
 /// refuses foreign model types with its own reason.
 fn sniff_speech_family(dir: &Path) -> SpeechFamily {
     // The Core ML export has no `model_type`; its layout identifies it.
-    if PARAKEET_COREML_PROGRAMS
+    let fluid_programs = {
+        let mut p = PARAKEET_COREML_PROGRAMS;
+        p[3] = PARAKEET_FLUID_JOINT;
+        p
+    };
+    if [PARAKEET_COREML_PROGRAMS, fluid_programs]
         .iter()
-        .all(|d| dir.join(d).is_dir())
+        .any(|programs| programs.iter().all(|d| dir.join(d).is_dir()))
         && dir.join(PARAKEET_COREML_VOCAB).is_file()
     {
         return SpeechFamily::ParakeetTdt;
@@ -491,7 +529,7 @@ pub fn verify_speech_install(dir: &Path) -> Result<SpeechInstallReceipt, ModelEr
             detail: format!("unknown speech family {:?}", receipt.speech_family),
         }
     })?;
-    for name in runtime_files(family) {
+    for name in runtime_files(family, receipt.files.keys().map(String::as_str)) {
         if !receipt.files.contains_key(*name) {
             return Err(ModelError::TrustedReceiptInvalid {
                 detail: format!("speech receipt is missing {name}"),
@@ -641,6 +679,14 @@ mod tests {
             install_files(SpeechFamily::ParakeetTdt, &[]).unwrap().len(),
             13
         );
+        // Naming the Fluid joint selects the Fluid set instead of adding to v3.
+        let fluid = install_files(
+            SpeechFamily::ParakeetTdt,
+            &["JointDecision.mlmodelc/model.mil".into()],
+        )
+        .unwrap();
+        assert_eq!(fluid.len(), 13);
+        assert!(!fluid.iter().any(|f| f.starts_with("JointDecisionv3")));
     }
 
     /// A synthetic Core ML Parakeet layout: tiny stand-in files, since the
@@ -665,6 +711,36 @@ mod tests {
         )
         .unwrap();
         dir
+    }
+
+    #[test]
+    fn coreml_parakeet_probe_accepts_the_fluid_joint_name() {
+        let dir = std::env::temp_dir().join(format!(
+            "ts-speech-coreml-fluid-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        for file in PARAKEET_FLUID_COREML_RUNTIME_FILES {
+            let path = dir.join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, b"x").unwrap();
+        }
+        std::fs::write(dir.join(PARAKEET_COREML_VOCAB), r#"{"0":"<unk>","1":"b"}"#).unwrap();
+        std::fs::write(dir.join("config.json"), r#"{"name":"Fluid Speech Pro"}"#).unwrap();
+        assert_eq!(sniff_speech_family(&dir), SpeechFamily::ParakeetTdt);
+        let listed: Vec<String> = PARAKEET_FLUID_COREML_RUNTIME_FILES
+            .iter()
+            .map(|f| f.to_string())
+            .collect();
+        let report = probe_speech_dir(&dir, &listed).unwrap();
+        assert_eq!(report.kind, SpeechProbeKind::ParakeetTdt { vocab_size: 2 });
+        // Without the Fluid joint listed, the v3 set is required and missing.
+        let err = probe_speech_dir(&dir, &[]).unwrap_err();
+        assert!(err.contains("JointDecisionv3"), "{err}");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

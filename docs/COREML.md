@@ -16,11 +16,24 @@ audio catalog reports `can_run: false`.
 |---|---|---|---|
 | [FluidInference/parakeet-redux-coreml](https://huggingface.co/FluidInference/parakeet-redux-coreml/tree/8c5ef97a29cd120dc76b354b3f22b7fec3b486f9) | `8c5ef97a29cd120dc76b354b3f22b7fec3b486f9` | `coreml::parakeet` | CC-BY-4.0 |
 | [FluidInference/parakeet-ultra-coreml](https://huggingface.co/FluidInference/parakeet-ultra-coreml/tree/95eaa59a39d4394f047a4dc5cce480388a60d1b6) | `95eaa59a39d4394f047a4dc5cce480388a60d1b6` | `coreml::parakeet` (same component contract as Redux) | CC-BY-4.0 |
+| [FluidVoice-Labs/fluid-speech-pro-coreml](https://huggingface.co/FluidVoice-Labs/fluid-speech-pro-coreml/tree/3b9d38a93d606f84011e5a0a669b7ea146375a22) (verbatim style) | `3b9d38a93d606f84011e5a0a669b7ea146375a22` | `coreml::parakeet` (`ParakeetExport::FluidSpeechPro`: joint named `JointDecision`, standard TDT loop) | CC-BY-4.0 |
 | [FluidInference/parakeet-unified-en-0.6b-coreml](https://huggingface.co/FluidInference/parakeet-unified-en-0.6b-coreml/tree/d32e972dd4315f1dc3f6be28fb2aab0ab3e80358) (streaming subset only) | `d32e972dd4315f1dc3f6be28fb2aab0ab3e80358` | `coreml::parakeet_unified`, `parakeet_unified_stream` | CC-BY-4.0 |
 | [FluidInference/embeddinggemma-2-coreml](https://huggingface.co/FluidInference/embeddinggemma-2-coreml/tree/3f978ddf92cac9aa07eb2dcf6eb36cf450f3dba4) | `3f978ddf92cac9aa07eb2dcf6eb36cf450f3dba4` | `coreml::embedding_gemma2`, `embedding_gemma2_media` | Apache-2.0 |
 | [lorelaiassistant/embeddinggemma-2-coreml-int8](https://huggingface.co/lorelaiassistant/embeddinggemma-2-coreml-int8/tree/45446c9c1bac44874191b6311dd4c26e0af313aa) (text and vision, no audio) | `45446c9c1bac44874191b6311dd4c26e0af313aa` | `coreml::embedding_gemma2` (int8 token table), `embedding_gemma2_media` | Apache-2.0 |
 | [FluidInference/speaker-diarization-coreml](https://huggingface.co/FluidInference/speaker-diarization-coreml/tree/7eab74f3463c736418d0eb10296261ae581146c9) (community-1 subset only) | `7eab74f3463c736418d0eb10296261ae581146c9` | `coreml::diarization` | CC-BY-4.0 (that subset) |
 | [FluidInference/unlimited-ocr-mlx-coreml](https://huggingface.co/FluidInference/unlimited-ocr-mlx-coreml/tree/4568571eacd864e0a253c609b3c9d0e00450cebc) (Core ML parts only) | `4568571eacd864e0a253c609b3c9d0e00450cebc` | `coreml::unlimited_ocr` | MIT |
+
+Fluid Speech Pro (Core ML) is FluidVoice's conversion of Fluid Speech Pro, a
+fine-tune of `moondream/parakeet-ultra` with one extra encoder block (its
+FrameCleaner, compiled into `Encoder`). Its `config.json` has no `contract`, so
+the runner recognizes it by `name` plus the `JointDecision` program, records
+its encoder as `int8_linear_per_channel` (the card states it only in prose),
+and decodes with the standard TDT loop of its parakeet-mlx reference.
+Attribution: "Fluid Speech Pro by FluidVoice. Built on NVIDIA Parakeet TDT
+0.6B v3 and Moondream Parakeet Ultra." The export has no clean mode yet; the
+CPU port in `audio::stt::parakeet` has both styles. `coreml_fluid_speech`
+(runtime tests, ignored) holds its transcripts to the CPU port on four `say`
+clips.
 
 Attribution: the Parakeet exports are Core ML conversions by Fluid Inference of
 `moondream/parakeet-redux` and `moondream/parakeet-ultra`, both derived from
@@ -146,7 +159,7 @@ Metal. Contract, export command and measurements:
 
 | Model | Default compute units | Override |
 |---|---|---|
-| Parakeet | preprocessor CPU, encoder by weight format (Redux GPU, Ultra Neural Engine), decoder and joint CPU | `TURBOSPARK_PARAKEET_COREML_ENCODER_UNITS` |
+| Parakeet | preprocessor CPU, encoder by weight format (Redux GPU, Ultra and Fluid Speech Pro Neural Engine), decoder and joint CPU | `TURBOSPARK_PARAKEET_COREML_ENCODER_UNITS` |
 | Parakeet Unified | mel on the host, int8 encoder Neural Engine, decoder and joint CPU | `TURBOSPARK_PARAKEET_UNIFIED_ENCODER_UNITS` |
 | EmbeddingGemma 2 | text Neural Engine, audio and vision GPU | `TURBOSPARK_EMBEDDINGGEMMA2_COREML_UNITS` (text) |
 | Unlimited OCR | page encoder GPU (fixed), decoder GPU | none; Neural Engine refused |

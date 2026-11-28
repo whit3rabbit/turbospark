@@ -108,6 +108,17 @@ struct SpeechToTextModelSlot: View {
                 .disabled(!controller.canChangeSpeechToTextModels)
             }
             if isOn { details }
+            // Only Fluid Speech Pro on the CPU has a clean transcript style.
+            // It sits under the model it belongs to, unlike the speakers
+            // switch above, which turns the whole job on or off.
+            if job == .final, profile?.family == AudioWorkspaceController.cleanTranscriptFamily {
+                Toggle(isOn: Binding(get: { controller.cleanTranscripts },
+                                     set: { on in TSMotion.animate(TSMotion.select) { controller.cleanTranscripts = on } })) {
+                    Text("Remove fillers and repeats", bundle: .module).themedFont(.small)
+                }
+                .toggleStyle(.switch).controlSize(.small)
+                .disabled(!controller.canChangeSpeechToTextModels)
+            }
             Text(LocalizedStringKey(job.hintKey), bundle: .module)
                 .themedFont(.small).foregroundStyle(.appSecondary)
                 .fixedSize(horizontal: false, vertical: true)

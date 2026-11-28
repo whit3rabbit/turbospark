@@ -212,6 +212,8 @@ pub mod fish_drama3_codec;
 #[cfg(target_os = "macos")]
 pub mod fish_drama3_tower;
 #[cfg(target_os = "macos")]
+pub mod fluid_speech;
+#[cfg(target_os = "macos")]
 pub mod kokoro;
 #[cfg(target_os = "macos")]
 pub mod megatts3;

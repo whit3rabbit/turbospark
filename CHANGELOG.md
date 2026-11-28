@@ -24,6 +24,21 @@ when this file gets updated relative to the version bump and the tag.
   through Swift MLX, on Voice Cloning (clone and voice direction), Voice Design,
   and Text-to-Speech with speakers S0 to S9. Non-commercial license, accepted
   before download. See `docs/BREEZE_TTS.md`.
+- Fluid Speech Pro speech-to-text (FluidVoice, CC-BY-4.0, a Parakeet Ultra
+  fine-tune with an extra FrameCleaner block). CPU port in
+  `audio::stt::parakeet` for the pinned MLX export (fp32 or 8-bit) with
+  verbatim and clean styles (`TranscriptStyle`, `--clean` in the
+  `parakeet_transcribe` example), and a `fluid-speech-pro-coreml` audio
+  catalog row run by the Rust Core ML Parakeet runner on the Neural Engine
+  (verbatim only; the export has no clean mode). A second row,
+  `fluid-speech-pro-mlx-8bit` (family `fluid_speech_pro`), runs the CPU port
+  in the native audio session in 15 s windows and takes a new request field,
+  `transcript_style` (`verbatim` or `clean`; other models refuse it). The app
+  lists both under Final Transcript (Core ML after Parakeet Ultra, CPU after
+  Redux) and shows a "Remove fillers and repeats" switch when the CPU row is
+  the final model; it applies to the Transcribe page and the Record page's
+  final pass. CPU-declared rows now open on the CPU from the Record page too.
+  The Glade (Core AI) bundle is not supported: it needs macOS 27.
 - Server: llama.cpp-style `timings` and `usage.prompt_tokens_details.cached_tokens`
   on chat completion and completion responses, and `turbospark_text_*` series on
   `GET /v1/metrics`, which every server now serves behind the usual auth.

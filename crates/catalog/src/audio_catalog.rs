@@ -622,6 +622,9 @@ impl AudioCatalog {
                         .ok_or("audio weight size overflow")?;
                     (compiled.saturating_mul(3).saturating_add(16_000*1800*4).saturating_add(256<<20),"estimate: three times compiled weights, 30-minute PCM, and 256 MiB working reserve; Redux measured 488 MB peak footprint on one 2.8 s clip (GPU encoder, M4 Max)")
                 }
+                // The 8-bit export is dequantized to f32 at load (and clean
+                // style folds its adapter into those weights).
+                AudioTask::SpeechToText if family == "fluid_speech_pro" => (weight_bytes.saturating_mul(3).saturating_add(16_000*1800*4).saturating_add(512<<20),"measured 2.57 GB (verbatim) and 2.68 GB (clean) peak footprint on one 5 s clip (8-bit install, M4 Max, CPU); estimate: three times checkpoint weights, 30-minute PCM, and 512 MiB working reserve"),
                 AudioTask::SpeechToText if family == "parakeet_unified" => {
                     let compiled = row
                         .assets
@@ -1264,10 +1267,13 @@ impl AudioCatalog {
         // Rust session opens. Swift-hosted rows never reach one, and live-only
         // Parakeet Unified opens through the stream API, which checks its own
         // layout. Both Core ML layouts would fail the probe, so they get no
-        // speech receipt; the audio receipt still pins every asset.
+        // speech receipt; the audio receipt still pins every asset. The Fluid
+        // Speech Pro MLX export has no layout the probe knows either; its
+        // loader checks the config and tensors at open.
         if identity.task == AudioTask::SpeechToText
             && !profile.capabilities.backend.starts_with("swift_")
             && profile.family != "parakeet_unified"
+            && profile.family != "fluid_speech_pro"
         {
             crate::install_speech_receipt(
                 &source_root,
@@ -2102,6 +2108,7 @@ fn require_library_audio_dirs(root: &Path, path: &Path) -> Result<(), String> {
 /// exists and was reviewed. Every other new row stays closed.
 const REVIEWED_ADAPTERS: &[&str] = &[
     "fish_drama3",
+    "fluid_speech_pro",
     "megatts3",
     "mel_roformer",
     "mossformer2_se",
@@ -2215,6 +2222,26 @@ fn profile_capabilities(family: &str) -> AudioCapabilities {
             // Metal by default; the CPU reference is the portable fallback.
             backend: "metal".into(),
             cancellation: "diffusion_step".into(),
+            can_run: true,
+            unavailable_reason: None,
+            compute: None,
+            http_api: true,
+            ..Default::default()
+        };
+    }
+    if family == "fluid_speech_pro" {
+        // The `audio::stt::parakeet` port of the Fluid Speech Pro MLX export
+        // on the CPU, in 15 s windows (`runtime::fluid_speech`). It is the
+        // only Fluid row with the clean style (`transcript_style`).
+        return AudioCapabilities {
+            languages: vec![],
+            voices: vec![],
+            max_input_seconds: None,
+            supports_lyrics: false,
+            operations: vec!["transcribe".into()],
+            timing: Some("token".into()),
+            backend: "portable_cpu".into(),
+            cancellation: "window".into(),
             can_run: true,
             unavailable_reason: None,
             compute: None,
@@ -3563,7 +3590,7 @@ mod tests {
     #[test]
     fn initial_audio_profiles_have_exact_complete_pins_and_wire_metadata() {
         let catalog = AudioCatalog::embedded().unwrap();
-        assert_eq!(catalog.entries().count(), 27);
+        assert_eq!(catalog.entries().count(), 29);
         for (task, alias, repo, revision, rate, channels) in [
             (
                 AudioTask::TextToSpeech,
@@ -3634,6 +3661,22 @@ mod tests {
                 "parakeet-ultra-coreml",
                 "FluidInference/parakeet-ultra-coreml",
                 "95eaa59a39d4394f047a4dc5cce480388a60d1b6",
+                16000,
+                1,
+            ),
+            (
+                AudioTask::SpeechToText,
+                "fluid-speech-pro-coreml",
+                "FluidVoice-Labs/fluid-speech-pro-coreml",
+                "3b9d38a93d606f84011e5a0a669b7ea146375a22",
+                16000,
+                1,
+            ),
+            (
+                AudioTask::SpeechToText,
+                "fluid-speech-pro-mlx-8bit",
+                "FluidVoice-Labs/fluid-speech-pro-mlx",
+                "aeb1d4e43487586b15d86c0a1dd4511e1cf6b7a0",
                 16000,
                 1,
             ),
@@ -3724,10 +3767,13 @@ mod tests {
         // The Core ML profile runs through the reviewed native adapter, and
         // its memory estimate counts compiled weights, not safetensors.
         // Ultra shares Redux's component contract, so it is the same family
-        // and decode flow; only its int8 encoder is larger.
+        // and decode flow; only its int8 encoder is larger. Fluid Speech Pro
+        // is the same family; the runtime picks its joint program and the
+        // standard TDT loop from the export (`ParakeetExport`).
         for (alias, encoder_bytes) in [
             ("parakeet-redux-coreml", 182_389_312u64),
             ("parakeet-ultra-coreml", 594_211_328),
+            ("fluid-speech-pro-coreml", 613_088_448),
         ] {
             let parakeet = catalog.get(alias).unwrap();
             assert_eq!(parakeet.family, "parakeet_tdt");
@@ -3743,6 +3789,18 @@ mod tests {
                 .operations
                 .contains(&"transcribe".to_string()));
         }
+        // The Fluid MLX row runs on the CPU (the app opens it portable) and
+        // is admitted for its f32-widened weights, not the 8-bit file size.
+        let fluid = catalog.get("fluid-speech-pro-mlx-8bit").unwrap();
+        assert_eq!(fluid.family, "fluid_speech_pro");
+        assert_eq!(fluid.capabilities.backend, "portable_cpu");
+        assert!(fluid.capabilities.can_run);
+        assert_eq!(fluid.capabilities.operations, ["transcribe"]);
+        assert!(fluid.resident_memory_bytes > 3 * 751_204_956);
+        assert!(fluid
+            .assets
+            .iter()
+            .any(|a| a.path == "clean-mode.safetensors"));
         // The live model pins one streaming encoder, not the 11 GB repo, and
         // is never offered as a batch transcriber.
         let unified = catalog.get("parakeet-unified-en-coreml").unwrap();

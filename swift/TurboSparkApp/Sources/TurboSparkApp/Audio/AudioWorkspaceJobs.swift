@@ -212,6 +212,7 @@ extension AudioWorkspaceController {
         // native cloner's request carries none (`runRequest`).
         let clonesNatively = currentTask == .textToSpeech && Self.runClonesNatively(profile, speech: inputs.speech)
         let experimentalMetal = page == .advanced && allowExperimentalMetal
+        let cleanTranscript = cleanTranscripts
         jobTask = Task { [weak self] in
             guard let self else { return }
             let admitted = await ImageJobCoordinator.shared.acquire()
@@ -250,7 +251,8 @@ extension AudioWorkspaceController {
                 // than the Rust Metal path; nil keeps the Rust session.
                 let isolator = currentTask == .enhancement ? try await self.offlineVoiceIsolator(for: profile, source: result) : nil
                 let session = provider == .qwenMLX || provider == .breezeMLX || isolator != nil ? nil : try await self.residentSession(for: profile, portable: portable, experimentalMetal: experimentalMetal, source: result)
-                let request = Self.runRequest(inputs, task: currentTask, profile: profile)
+                let request = Self.transcriptionRequest(Self.runRequest(inputs, task: currentTask, profile: profile),
+                                                        family: profile.family, clean: cleanTranscript)
                 var labelFailure: String?
                 var stoppedEarly = false
                 if currentTask == .speechToText {
@@ -522,6 +524,20 @@ extension AudioWorkspaceController {
     var autoMeetingNotes: Bool {
         get { preferences.autoMeetingNotes ?? false }
         set { preferences.autoMeetingNotes = newValue; persistPreferences() }
+    }
+
+    var cleanTranscripts: Bool {
+        get { preferences.cleanTranscripts ?? false }
+        set { preferences.cleanTranscripts = newValue; persistPreferences() }
+    }
+
+    /// Only Fluid Speech Pro on the CPU has a clean style; every other model
+    /// refuses `transcriptStyle`, so it is set for that family alone.
+    nonisolated static let cleanTranscriptFamily = "fluid_speech_pro"
+    nonisolated static func transcriptionRequest(_ base: AudioRequest, family: String, clean: Bool) -> AudioRequest {
+        var request = base
+        request.transcriptStyle = family == cleanTranscriptFamily && clean ? "clean" : nil
+        return request
     }
 
     /// After a Meeting take's final pass, when the user turned it on.

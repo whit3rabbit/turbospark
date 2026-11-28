@@ -346,6 +346,9 @@ struct AudioWorkspacePreferences: Codable, Sendable {
     /// Clean the microphone for live text while recording (the saved audio
     /// is never cleaned). Optional so older profiles decode; nil is off.
     var reduceLiveNoise: Bool? = nil
+    /// Fluid Speech Pro (CPU) transcripts without fillers and repeated
+    /// words. Optional so older profiles decode; nil is off.
+    var cleanTranscripts: Bool? = nil
 }
 
 final class AudioLibraryStore: @unchecked Sendable {
