@@ -853,8 +853,34 @@ impl RealForwardRunner {
             pack: Some(&b.affine_pack),
         };
         let t_encode = std::time::Instant::now();
+        // Image positions (an Inkling 2 vision prompt): their rows replace
+        // the POST-norm hidden state, as on decode, because `embed_norm` is a
+        // text-only op. The lookups are skipped and, after `norm_rows`, a GPU
+        // copy lays each run of image rows over `cur` (a host write would be
+        // overwritten by the norm dispatch). `upload` lives to the end of
+        // this function, past the pass's wait.
+        let mut image_runs: Vec<(usize, usize, usize)> = Vec::new(); // (row, len, upload row)
+        let mut upload_bytes: Vec<u8> = Vec::new();
+        if let Some(pv) = self.prompt_vision.as_ref() {
+            for m in 0..n {
+                if let Some(row) = pv.row_for(base + m) {
+                    let at = upload_bytes.len() / (h * 2);
+                    upload_bytes.extend_from_slice(row);
+                    match image_runs.last_mut() {
+                        Some(run) if run.0 + run.1 == m => run.1 += 1,
+                        _ => image_runs.push((m, 1, at)),
+                    }
+                }
+            }
+        }
+        let is_image = |m: usize| image_runs.iter().any(|&(r, len, _)| m >= r && m < r + len);
+        let upload =
+            (!upload_bytes.is_empty()).then(|| c.context.new_buffer_with_data(&upload_bytes));
         let pass = c.context.begin_pass_labeled("inkling2 verify");
         for (m, &t) in tokens.iter().enumerate() {
+            if is_image(m) {
+                continue;
+            }
             if let Some(l) = c.lamq.clone() {
                 // A LookAtMyQuant bucket row, as decode embeds it.
                 l.embed(
@@ -886,6 +912,16 @@ impl RealForwardRunner {
             (&b.cur, 0, hs),
             n,
         )?;
+        if let Some(upload) = upload.as_ref() {
+            for &(row, len, at) in &image_runs {
+                c.copy(
+                    &pass,
+                    (upload, (at * h * 2) as u64),
+                    (&b.cur, (row * h * 2) as u64),
+                    len * h,
+                )?;
+            }
+        }
 
         let (core_start, core_end, layers) = (
             cfg.core_start as usize,

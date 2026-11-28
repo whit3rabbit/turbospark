@@ -322,6 +322,11 @@ pub fn parse_vision_config(json: &str) -> Result<VisionConfig, Gemma4Error> {
     if root.get("model_type").and_then(serde_json::Value::as_str) == Some("minicpmv4_7") {
         return parse_minicpm_v_vision_config(root, vc);
     }
+    if root.get("model_type").and_then(serde_json::Value::as_str)
+        == Some(crate::gemma4_checkpoint::INKLING2_MODEL_TYPE)
+    {
+        return crate::gemma4_checkpoint::parse_inkling2_vision_config(root, vc);
+    }
     let i = |k: &str| -> Result<i64, Gemma4Error> {
         vc.get(k)
             .and_then(serde_json::Value::as_i64)

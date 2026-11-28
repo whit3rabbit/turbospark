@@ -397,6 +397,20 @@ TURBOSPARK_QWEN25VL_SCRATCH=/Volumes/T7/vision-dumps/qwen25vl-3b-small \
   cargo test -p turbospark-runtime --release --lib \
   vision::qwen25::tests::the_real_tower_matches_the_numpy_reference -- --ignored --nocapture
 
+# The Inkling 2 tower against a numpy transcription of transformers. Needs the
+# sidecar, the 636 MB BF16 tower from scripts/inkling2_vision_fetch.py, a raw
+# RGB8 image and python3 with numpy. Gate: every stage above 0.999, the merger
+# above 0.9999. Use one page over 640 px per side: only an upsampled position
+# table exercises the border clamp.
+python3 -I scripts/inkling2_vision_fetch.py --out ~/models/inkling2-vision/vision.safetensors
+TURBOSPARK_INKLING2_SIDECAR_DIR=~/models/inkling2-vision/inkling2-mini.gturbo-vision \
+TURBOSPARK_INKLING2_VISION_SAFETENSORS=~/models/inkling2-vision/vision.safetensors \
+TURBOSPARK_INKLING2_IMAGE=~/models/inkling2-vision/ref/page_701x903.rgb \
+TURBOSPARK_INKLING2_IMAGE_HW="701 903" \
+TURBOSPARK_INKLING2_SCRATCH=~/models/inkling2-vision/ref/run \
+  cargo test -p turbospark-runtime --release --lib \
+  inkling2_real_tower_matches_the_numpy_reference -- --ignored --nocapture
+
 # The whole Gemma 4 install on an image prompt against mlx-vlm under four
 # mask rules. Needs a local copy of the checkpoint (hf download ...
 # --revision 0d77464e... --local-dir), ~14 GB for the install and ~0.2 GB of

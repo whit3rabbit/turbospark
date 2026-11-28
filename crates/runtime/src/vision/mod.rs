@@ -41,6 +41,7 @@ pub(crate) mod clip;
 pub(crate) mod deepseek_ocr;
 pub(crate) mod gemma4;
 mod inject;
+pub(crate) mod inkling2;
 pub(crate) mod lfm3_vl;
 pub(crate) mod minicpm;
 pub(crate) mod muse;

@@ -1438,4 +1438,5 @@ Stage C: drafter and comparisons
 - MLX baseline: mlx-lm PR #2086 (open) and the `mlx-community` /
   `nativ-community` MLX checkpoints, for a speed and quality comparison on
   the same Mac.
-- Vision tower: out of scope until the text path ships.
+- Vision tower: a sidecar for every install, real-gated 2026-11-27. See
+  [INKLING2_VISION_PHASE0.md](INKLING2_VISION_PHASE0.md).

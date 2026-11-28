@@ -402,6 +402,8 @@ pub struct RealForwardRunner {
     pub(crate) clip_vision: Option<crate::vision::clip::ClipVisionTower>,
     /// The Muse-Glimmer tower, opened lazily on the first image.
     pub(crate) muse_vision: Option<crate::vision::muse::MuseVisionTower>,
+    /// The Inkling 2 tower, opened lazily on the first image.
+    pub(crate) inkling2_vision: Option<crate::vision::inkling2::Inkling2VisionTower>,
     /// The Pixtral tower, opened lazily on the first image.
     pub(crate) pixtral_vision: Option<crate::vision::pixtral::PixtralVisionTower>,
     /// The SigLIP tower (DeepSeek-VL2), lazily opened by
