@@ -1036,7 +1036,7 @@ impl RealForwardRunner {
                     d.dflash2_context_rows(head, ctx, pass, (&buf, off), p, n)?;
                 }
                 Head::Markov(m) => {
-                    for l in 0..c.layers {
+                    for (l, &alpha) in m.alpha.iter().take(c.layers).enumerate() {
                         let lp = |s: &str| format!("layers.{l}.{s}");
                         gpu::encode_dspark_tap_mix_norm(
                             ctx,
@@ -1044,7 +1044,7 @@ impl RealForwardRunner {
                             (&buf, off),
                             d.wv(&lp("dflare_norm.weight")),
                             (&d.cmix, 0),
-                            m.alpha[l],
+                            alpha,
                             h as u32,
                             ts,
                             c.eps,
