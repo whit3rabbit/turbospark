@@ -1155,7 +1155,7 @@ impl SpeculativeProducer for BadBlockDrafterTarget {
 }
 
 #[test]
-#[should_panic(expected = "draft_block must populate exactly round_block proposals")]
+#[should_panic(expected = "draft_block must populate 4 to 4 proposals (3 produced)")]
 fn bad_block_drafter_length_panics() {
     let tokenizer = load_tokenizer();
     let vocab = tokenizer.vocab_size;
