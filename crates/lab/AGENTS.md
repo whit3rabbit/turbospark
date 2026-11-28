@@ -150,6 +150,9 @@ loop's `run-experiment`. Text and audio installs of every family.
   in `src/kernel/support.rs`, records `out_fnv` under `--hash`, and its
   `cases` returns `Err(reason)` for an install it cannot serve, which
   `tslab capabilities` reports.
+- A speculative arm can read the prompt by a different path from the plain
+  arm. `ab` warns when the arms decode different text: treat that as a path or
+  correctness question before reading the speed ratio.
 - Commands print through `say!`, never `println!`: under `--json` stdout is
   exactly one envelope (`tests/schema_contract.rs`).
 - The dashboard stays read-only and lock-free: no POST route, no write under

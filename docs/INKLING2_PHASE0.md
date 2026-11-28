@@ -1474,3 +1474,69 @@ Stage C: drafter and comparisons
   the same Mac.
 - Vision tower: a sidecar for every install, real-gated 2026-11-27. See
   [INKLING2_VISION_PHASE0.md](INKLING2_VISION_PHASE0.md).
+
+## Block drafter prefill (2026-11-28)
+
+**Issue.** With DSpark or DFlash2 open, the speculative loop read the prompt
+one token at a time: `supports_chunked_drafter_prefill` answered yes only for
+dense Qwen. Two effects:
+
+- Prompt reading ran at about 51 tok/s against 216 for plain decode on the
+  `inkling2-mini-mlx4` install, and 39 against 96 on `inkling2-mini-oq4e`
+  (tslab, code workload, 2026-11-28, before the fix).
+- The walk never reaches the matrix-unit prefill, so on native-expert
+  installs the speculative and plain runs held different KV. Their greedy
+  text parted at a near-tie (token 44 of the code workload on mlx4).
+  `TURBOSPARK_INKLING2_PREFILL_MMA=0` on the plain arm reproduced the
+  speculative arm's digest, so speculation itself was exact.
+
+**Fix.** The multi-row pass already records every row's drafter taps.
+`prefill_chunk_real_inkling2_priming_drafter` writes the drafter's context
+after each panel (`inkling2_dspark_sync`), leaving the prompt's last position
+to the first draft round, as the walk does.
+`TURBOSPARK_DFLASH_CHUNKED_PREFILL=0` (tslab knob `dflash_chunked_prefill`,
+sweep `dflash_prefill_driver`) restores the walk. Streamed, LoopCD and vision
+prompts keep the walk.
+
+**Gates** (M4 Max, DSpark):
+
+- `real_forward_inkling2_drafter_chunked.rs` on mlx4, matrix prefill off:
+  final logits and the first seven proposals equal the walk's at 1, 5, 64,
+  65, 128, 129 and 300 tokens. A mutant that skips the per-panel context
+  write fails at 129.
+- `real_forward_inkling2_speculative.rs`, depth 3, mlx4 and oQ4e: 255 tokens
+  identical on all four prompts. Its plain side now uses the chunked loop,
+  as the shipped paths do.
+- DFlash2 (`INKLING2_SPEC_DRAFTER=dflash2`, mlx4): both gates above pass.
+
+`tslab ab` now prints a warning when its two arms decode different text.
+
+**ANE for the drafter: not built.** The draft took about 10 ms of a 57 ms
+round at depth 3 (development reading), so a free drafter would cut round
+time by under a fifth. `docs/DFLASH2.md` section 8 records why a drafter is a
+poor ANE fit, and the same shape applies here: a draft is a handful of rows,
+each Core ML prediction carries about 1.4 ms of fixed cost, the ANE ran far
+below Metal at small row counts, and the next draft waits for the verify, so
+nothing overlaps. These are readings from other models; nothing was run on
+the ANE with an Inkling drafter. The ANE prefill split is dense-Qwen only.
+
+## oQ4e MLX intake (2026-11-28)
+
+`mlx-community/Inkling-2-Mini-oQ4e-mtp` installs through
+`turbospark model pull-local`. `inkling2_mlx_oq.rs` undoes oMLX's renames and
+stacked matrices. Experts in layers 0-19 are NVFP4 and copy as they are;
+layers 20-23 are affine 4-bit and repack without loss into GGUF Q4_1, which
+turns off matrix-unit prefill for the install.
+
+Not wired: the source's top-level `mtp.safetensors` is not picked up as the
+drafter (copy it with its config into `<install>/dspark/`), and there is no
+catalog row.
+
+Install checks against `inkling2-mini-mlx4`: 646 resident names equal, 468
+byte-identical, the 178 quantized ones at cosine 0.9825 or better. Reference
+perplexity 4.6899 (BF16 4.7024, mlx4 4.8026).
+
+The intake's speculative gate found the INT8 batched GEMM
+(`dequant_int8_batch.metal`) was not bit-exact with the INT8 GEMV. Not run
+after that fix: Gemma 4 12B's real-model gates, which also use INT8 matrices.
+

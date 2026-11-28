@@ -14,6 +14,9 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- Inkling 2 Mini oQ4e MLX checkpoints install with `turbospark model
+  pull-local`. The drafter still has to be copied into `dspark/` by hand. See
+  `docs/INKLING2_PHASE0.md`.
 - The macOS app attaches an installed vision sidecar when it loads a matching
   model that has no tower of its own, and no longer offers the sidecar itself
   as a loadable model. A sidecar that cannot attach leaves the model text-only
@@ -148,6 +151,13 @@ when this file gets updated relative to the version bump and the tag.
   panicking the process. Device-fault handling is unchanged.
 
 ### Fixed
+- Inkling 2 with a speculative drafter reads the prompt through the chunked
+  prefill instead of one token at a time. It was 2 to 4 times slower to read
+  the prompt, and on native-expert installs its text could differ from plain
+  decode's.
+- INT8 batched matrix kernel now sums in the same order as the one-row
+  kernel; its rounding differed, which could change greedy text between
+  speculative and plain decode.
 - macOS app: Rewind's destructive button is no longer the default action, so
   Return cannot drop conversation history.
 - macOS app UI audit: small controls have a 20 pt minimum hit target, toasts

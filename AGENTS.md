@@ -77,6 +77,10 @@ The root references are:
   A wrong family can produce fluent, incorrect output.
 - Producers return logits. Sampling owns normalization. Never softmax in both
   the producer and sampler.
+- Attaching a drafter must not move the prompt onto another prefill path.
+  Matrix-unit and Steel prefill are not bit-equal to a token walk, so a
+  speculative-against-plain comparison is only valid on one path
+  (`crates/runtime/AGENTS.md`).
 - Repeated Metal encoding loops use `gpu::autorelease_pool`. Without an
   inner pool, autoreleased command objects accumulate for the life of the
   process.

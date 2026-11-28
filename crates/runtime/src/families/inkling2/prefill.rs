@@ -166,11 +166,53 @@ impl RealForwardRunner {
         st.multi_row_refusal()
     }
 
+    /// Whether a block drafter can be primed from the chunked driver's
+    /// panels instead of the token-at-a-time walk. The walk costs a full
+    /// forward per prompt token and never reaches the matrix-unit prefill,
+    /// so it also leaves a different KV from plain decode's prefill.
+    /// `TURBOSPARK_DFLASH_CHUNKED_PREFILL=0` keeps the walk.
+    pub(crate) fn inkling2_chunked_drafter_prefill(&self) -> bool {
+        self.inkling2_dspark_open()
+            && chunked_enabled()
+            && self.inkling2_chunked_refusal().is_none()
+            && self.prompt_vision.is_none()
+            && self
+                .real_inkling2
+                .as_ref()
+                .is_some_and(|s| s.loopcd.is_none())
+    }
+
     pub(crate) fn prefill_chunk_real_inkling2(
         &mut self,
         tokens: &[i32],
         start_position: usize,
         logits: &mut [LogitValue],
+    ) -> Result<(), RealForwardError> {
+        self.prefill_panels_inkling2(tokens, start_position, logits, None)
+    }
+
+    /// [`Self::prefill_chunk_real_inkling2`] that also writes the drafter's
+    /// context rows, panel by panel, because the next panel overwrites the
+    /// taps. `hold_last` leaves the prompt's final position unwritten, as the
+    /// walk does; the first draft round writes it.
+    pub(crate) fn prefill_chunk_real_inkling2_priming_drafter(
+        &mut self,
+        tokens: &[i32],
+        start_position: usize,
+        logits: &mut [LogitValue],
+        hold_last: bool,
+    ) -> Result<(), RealForwardError> {
+        foundation::engaged!("dflash_chunked_prefill");
+        let end = start_position + tokens.len() - usize::from(hold_last && !tokens.is_empty());
+        self.prefill_panels_inkling2(tokens, start_position, logits, Some(end))
+    }
+
+    fn prefill_panels_inkling2(
+        &mut self,
+        tokens: &[i32],
+        start_position: usize,
+        logits: &mut [LogitValue],
+        prime_to: Option<usize>,
     ) -> Result<(), RealForwardError> {
         if tokens.is_empty() {
             return Err(RealForwardError::Unsupported(
@@ -211,6 +253,9 @@ impl RealForwardRunner {
                 out,
                 head,
             )?;
+            if let Some(to) = prime_to {
+                self.inkling2_dspark_sync(to.min(start_position + offset + take))?;
+            }
             offset += take;
         }
         // A prefill is not a verify: nothing may roll it back.

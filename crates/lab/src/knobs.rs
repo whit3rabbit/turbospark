@@ -196,12 +196,13 @@ pub const KNOBS: &[Knob] = &[
     Knob {
         // Off is the token-at-a-time walk; on takes the chunked driver's
         // default arm (Steel), so the prompt's numerics move with it.
+        // Inkling 2 reads the same switch for DSpark and DFlash2.
         name: "dflash_chunked_prefill",
         env: "TURBOSPARK_DFLASH_CHUNKED_PREFILL",
         values: &["<unset>", "0"],
         read_at: ReadAt::ProcessCached,
         exactness: Exactness::KlBounded,
-        families: &["qwen35"],
+        families: &["qwen35", "inkling2_loop"],
         quotable: true,
         doc: "docs/DFLASH2.md",
         engagement: &[off("0", "dflash_chunked_prefill")],

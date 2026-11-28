@@ -70,7 +70,30 @@
     }
   ],
   "recommended": [],
-  "sweeps": [],
+  "sweeps": [
+    {
+      "id": "dflash_prefill_driver",
+      "description": "chunked prefill priming the block drafter against the token walk",
+      "when": [
+        "dflash"
+      ],
+      "metric": "prefill_tok_s",
+      "exactness": "dense_kl",
+      "workload": {
+        "prompts": [
+          {
+            "protocol": "medium-review"
+          }
+        ],
+        "decode_tokens": 16
+      },
+      "baseline": "chunked~dflash:3",
+      "candidates": [
+        "walk~dflash:3:dflash_chunked_prefill=0"
+      ],
+      "note": "both arms open the drafter: without it the knob changes nothing. The walk never reaches the matrix-unit prefill, so on native-expert installs the arms may decode different text"
+    }
+  ],
   "findings": [
     {
       "id": "inkling2_loop.null-decode-2026-11-21",

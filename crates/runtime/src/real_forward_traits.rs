@@ -365,6 +365,12 @@ impl SpeculativeProducer for RealForwardRunner {
     // `TURBOSPARK_MTP_CHUNKED_PREFILL=0` / `TURBOSPARK_DFLASH_CHUNKED_PREFILL=0`
     // keep the token-at-a-time walk, for A/B runs and as kill switches.
     fn supports_chunked_drafter_prefill(&self) -> bool {
+        // Inkling 2's block drafters read taps the multi-row pass already
+        // records for every row.
+        if self.real_inkling2.is_some() {
+            return crate::families::qwen::dflash_chunked_prefill()
+                && self.inkling2_chunked_drafter_prefill();
+        }
         let mtp = std::env::var("TURBOSPARK_MTP_CHUNKED_PREFILL").as_deref() != Ok("0")
             && self.real_mtp.is_some()
             && self.real_dflash.is_none();
@@ -403,7 +409,14 @@ impl SpeculativeProducer for RealForwardRunner {
         self.batched_tape = None;
         self.batched_tape_row0 = None;
         let result = gpu::autorelease_pool(|| {
-            if self.real_dflash.is_some() {
+            if self.real_inkling2.is_some() {
+                self.prefill_chunk_real_inkling2_priming_drafter(
+                    tokens,
+                    start_position,
+                    logits,
+                    next_token.is_none(),
+                )
+            } else if self.real_dflash.is_some() {
                 self.prefill_chunk_real_qwen_dense_priming_dflash(
                     tokens,
                     start_position,

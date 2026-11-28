@@ -30,6 +30,14 @@ policy.
   top-k, and top-p.
 - Reset every recurrent, convolutional, KV, and speculative state on session
   reset. A fluent output can still be wrong after stale state.
+- A family that speculates needs `supports_chunked_drafter_prefill`, or the
+  loop silently reads the prompt one token at a time: several times slower, and
+  on a family with a KL-bounded prefill default the KV then differs from plain
+  decode's, so greedy text can part at a near-tie while speculation itself is
+  exact. Tell the two apart by turning the prefill default off on the plain
+  side (Inkling 2: `TURBOSPARK_INKLING2_PREFILL_MMA=0`). A speculative gate's
+  plain side must call the loop the shipped paths call
+  (`run_raw_completion_chunked`), not `run_raw_completion`.
 - Dispatch routed experts in router ranking order. That order is reduction
   order.
 - Use an inner Metal autorelease pool for repeated forward passes and preserve

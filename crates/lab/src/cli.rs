@@ -639,6 +639,22 @@ fn median_peak(outcomes: &[&Outcome]) -> Option<f64> {
     (!v.is_empty()).then(|| stats::median(&v))
 }
 
+/// Pairs whose two arms decoded different tokens on any prompt. A speed ratio
+/// between them compares different work, and between plain and speculative
+/// greedy decode it also means the two did not run the same path.
+fn diverged_pairs(pairs: &[(Outcome, Outcome)]) -> usize {
+    let digests = |o: &Outcome| -> Vec<Value> {
+        o.record["prompts"]
+            .as_array()
+            .map(|ps| ps.iter().map(|p| p["decode_digest"].clone()).collect())
+            .unwrap_or_default()
+    };
+    pairs
+        .iter()
+        .filter(|(a, b)| digests(a) != digests(b))
+        .count()
+}
+
 /// Peak-footprint comparison between the arms' clean runs.
 pub fn memory_check(pairs: &[(Outcome, Outcome)], requested: Option<u64>, noise: u64) -> Value {
     let a: Vec<&Outcome> = pairs.iter().map(|p| &p.0).collect();
@@ -759,6 +775,13 @@ fn ab(mut args: Args) -> Result<(), String> {
         &verdict,
     );
     crate::say!("  memory: {memory}");
+    let diverged = diverged_pairs(&pairs);
+    if diverged > 0 {
+        crate::say!(
+            "  warning: the arms decoded different text in {diverged} of {} clean pairs",
+            pairs.len()
+        );
+    }
     report::print_buckets(&report::bucket_table(&pairs));
     let not_worse =
         noninferior.map(|limit| stats::decide_noninferior(&verdict.improvements, limit));
@@ -1113,5 +1136,30 @@ mod tests {
         );
         assert_eq!(r["points"][2]["added_dispatches"], 512);
         assert!(dispatch_probe_fit(&[0, 4], 64, |_| None).is_err());
+    }
+}
+
+#[cfg(test)]
+mod divergence_tests {
+    use super::*;
+
+    fn outcome(digest: &str) -> Outcome {
+        Outcome {
+            run_id: String::new(),
+            arm: String::new(),
+            round: 1,
+            warmup: false,
+            record: json!({"prompts": [{"decode_digest": "a"}, {"decode_digest": digest}]}),
+            status: "ok".into(),
+            eligible: true,
+            reasons: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_difference_on_a_later_prompt_counts_its_pair() {
+        let pairs = [(outcome("b"), outcome("b")), (outcome("b"), outcome("c"))];
+        assert_eq!(diverged_pairs(&pairs), 1);
+        assert_eq!(diverged_pairs(&pairs[..1]), 0);
     }
 }

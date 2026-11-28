@@ -14,6 +14,11 @@
 //! (`TURBOSPARK_INKLING2_DFLASH2=~/models/inkling2-dflash2`, or the install's
 //! `dflash2/`).
 //!
+//! Plain decode here prefills through the chunked driver, as the shipped
+//! loops do, because the speculative loop does too; the matrix-unit prefill
+//! is not bit-equal to a token-at-a-time walk, so mixing the two paths would
+//! compare prefill rounding rather than speculation.
+//!
 //! The committed token streams must be identical. A difference would have to
 //! come from a verify row that differs from the sequential row, which the
 //! verify gate (`real_forward_inkling2_verify.rs`) holds bit-exact, so this is
@@ -24,7 +29,7 @@
 use std::path::PathBuf;
 
 use turbospark_runtime::{
-    run_raw_completion, run_raw_completion_speculative, GenerationConfig, LogitProducer,
+    run_raw_completion_chunked, run_raw_completion_speculative, GenerationConfig, LogitProducer,
     RealForwardRunner,
 };
 
@@ -140,8 +145,17 @@ fn greedy_speculation_commits_the_plain_greedy_stream() {
     for (kind, text) in prompts() {
         let ids = tok.encode_text_continuation(&text);
         runner.reset();
-        let plain = run_raw_completion(&mut runner, &tok, &ids, &config, max_ctx, vocab, |_| {})
-            .expect("plain");
+        let plain = run_raw_completion_chunked(
+            &mut runner,
+            &tok,
+            &ids,
+            &config,
+            max_ctx,
+            vocab,
+            128,
+            |_| {},
+        )
+        .expect("plain");
         runner.reset();
         let spec = run_raw_completion_speculative(
             &mut runner,
