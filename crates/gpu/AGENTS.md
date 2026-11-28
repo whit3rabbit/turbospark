@@ -57,6 +57,12 @@ threadgroup shape, or normalization convention on the device.
   speculation leave sequential decode on the real 27B. Random fixture data
   rarely reaches a rounding boundary, so pin such a pair at the real width
   with a full, nonzero state (`tests/gdn_conv_order_parity.rs`).
+- A batched kernel claimed bit-exact with its one-row form must partition and
+  add lanes in the same order. Test it with wide-range inputs and non-zero
+  biases at real widths: small binary fractions sum exactly in any order, and
+  `dequant_int8_gemm_parity` passed on them while the INT8 batched GEMM
+  differed from the GEMV. A model-level speculative-against-greedy gate caught
+  it (`the_gemm_agrees_with_the_gemv_on_sums_that_round`).
 - Every bundled library builds with `-ffast-math`, which lets LLVM
   reassociate a multiply chain by operand rank (definition order). The same
   helper inlined into two kernels can therefore associate `x * inv * w`

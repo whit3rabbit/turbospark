@@ -267,3 +267,81 @@ fn the_gemm_and_the_gemv_agree_on_data_that_can_see_reassociation() {
         );
     }
 }
+
+/// Full-range inputs and signed biases, so every partial sum rounds. The
+/// other fixtures are small binary fractions whose sums are exact in any
+/// order, which is how a kernel that partitioned a row across lanes
+/// differently from the GEMV passed them and still drifted on real weights.
+#[test]
+fn the_gemm_agrees_with_the_gemv_on_sums_that_round() {
+    let mut context = MetalContext::new().expect("Metal device");
+    // One group, an odd group count, and Inkling 2's q and o widths.
+    for (rows, cols) in [(24, 64), (40, 320), (384, 2304), (96, 3072)] {
+        let groups = rows * cols / 64;
+        let scales_offset = (rows * cols) as u64;
+        let biases_offset = scales_offset + (groups * 2) as u64;
+        let mut blob = fill(0x51ED, rows * cols);
+        blob.extend_from_slice(&bf16_small(0xBEEF, groups));
+        let mut biases = bf16_small(0xF00D, groups);
+        biases.chunks_exact_mut(2).for_each(|c| c[1] |= 0x80);
+        blob.extend_from_slice(&biases);
+        let weights = context.new_buffer_with_data(&blob);
+
+        let batch = 5;
+        let x_values: Vec<f16> = (0..batch * cols)
+            .map(|i| {
+                let h = (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 20;
+                let v = ((h % 20011) as f32 - 10005.0) / 997.0;
+                f16::from_f32(v * (1 << (h % 5)) as f32 / 7.0)
+            })
+            .collect();
+        let x = context.new_buffer_with_data(&half_bytes(&x_values));
+        let matrix = || Int8ResidentMatrix {
+            buffer: &weights,
+            weights_offset: 0,
+            scales_offset,
+            biases_offset,
+            rows,
+            cols,
+        };
+        let y_batched = context.new_output_buffer((batch * rows * 2) as u64);
+        autorelease_pool(|| {
+            let pass = context.begin_pass();
+            encode_dequant_int8_gemm_resident(
+                &mut context,
+                &pass,
+                &matrix(),
+                (&x, 0),
+                (&y_batched, 0),
+                batch,
+            )
+            .expect("batched dispatch");
+            pass.commit_and_wait();
+        });
+        let got = turbospark_gpu::read_buffer_f16(&y_batched, 0, batch * rows);
+        let y_single = context.new_output_buffer((rows * 2) as u64);
+        for b in 0..batch {
+            autorelease_pool(|| {
+                let pass = context.begin_pass();
+                encode_dequant_int8_gemv_resident(
+                    &mut context,
+                    &pass,
+                    &matrix(),
+                    (&x, (b * cols * 2) as u64),
+                    (&y_single, 0),
+                )
+                .expect("single dispatch");
+                pass.commit_and_wait();
+            });
+            let expected = turbospark_gpu::read_buffer_f16(&y_single, 0, rows);
+            assert_eq!(
+                got[b * rows..(b + 1) * rows]
+                    .iter()
+                    .map(|v| v.to_bits())
+                    .collect::<Vec<_>>(),
+                expected.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                "{rows}x{cols} row {b} differs from the GEMV"
+            );
+        }
+    }
+}

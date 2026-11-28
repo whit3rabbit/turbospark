@@ -2,22 +2,14 @@
 // and has no batched verify, so there is no upstream kernel to mirror --
 // the same standing `dequant_int4_batch.metal` records, one width up.
 //
-// `dequant_int8_gemm_simd` is `dequant_int4_gemm_simd` with one BYTE per
-// element instead of a packed nibble pair. The block structure, the lane
-// partition, the accumulator layout, the unroll discipline and the row
-// blocking are that kernel's UNCHANGED: 8 SIMD groups per threadgroup, R
-// contiguous output rows per SIMD group, B right-hand sides with B baked as
-// a function constant so the `bi` loop unrolls, `acc[R][B]` at the same two
-// caps. Only two things differ:
-//
-//   - `row_bytes` is `n_dim`, not `n_dim / 2` (one byte per element);
-//   - the per-block unpack reads two `ushort`s (8 weight bytes per lane,
-//     the same 8 elements per (lane, block) the INT4 kernel unpacks from
-//     4) and feeds them through as floats with no nibble extraction.
-//
-// The bias term is identical: the 8 elements one lane sees per block are
-// the same 1/8 of one group of 64 in both widths, so `sum` and the group
-// index `g = blk * 4 + (lane >> 3)` carry over exactly.
+// `dequant_int8_gemm_simd` keeps `dequant_int4_gemm_simd`'s outer shape: 8
+// SIMD groups per threadgroup, R contiguous output rows per SIMD group, B
+// right-hand sides with B baked as a function constant so the `bi` loop
+// unrolls, `acc[R][B]` at the same two caps. The inner loop is NOT the INT4
+// one: it walks the row group by group with each lane on two elements, as
+// the INT8 GEMV does. An earlier version gave each lane 8 consecutive
+// elements of a 256-element block, which summed in a different order and
+// drifted from sequential decode on real weights.
 //
 // Like its sibling it is held bit-exact against the per-token GEMV rather
 // than against a tolerance: B rows of this kernel must equal B separate
@@ -26,10 +18,10 @@
 // test asserts. First carrier: the dense humanizer Gemma 4 12B, whose
 // every projection is INT8 affine at group 64.
 //
-// MEASUREMENTS: none yet. Unlike the INT4 sibling -- whose header is a
-// record of swept unroll counts and a row-block table -- this kernel ships
-// with the sibling's SHAPES (unroll_count(4), best_row_block's steps) and
-// no numbers of its own. The R table next door is a throughput choice
+// MEASUREMENTS: no sweep of its own. Unlike the INT4 sibling -- whose header
+// is a record of swept unroll counts and a row-block table -- this kernel
+// ships with the sibling's SHAPES (unroll_count(4), best_row_block's steps)
+// and no numbers. The R table next door is a throughput choice
 // proven not to move bits, so borrowing it is safe for correctness and
 // unproven for speed; a `c(M)` sweep on the real shapes (gate/up 15360x3840,
 // down 3840x15360, q 8192x3840) is the named follow-up before anyone
@@ -114,64 +106,10 @@ kernel void dequant_int8_gemm_simd(
         }
     }
 
-    const uint full_blocks = n_groups / 4;
-    for (uint blk = 0; blk < full_blocks; ++blk) {
-        // 8 bytes per lane x 32 lanes = 256 elements = 4 groups, the same
-        // partition the INT4 kernel runs at half the byte width. The
-        // loads are 2-byte-aligned pairs: resident tensors are 2-aligned
-        // but not 4-aligned, so a `uint*` load is undefined.
-        const uint byte_base = blk * 256u + lane * 8u;
-        const uint g = blk * 4u + (lane >> 3);
-        const uint elem = byte_base;
-
-        float qv[kInt8MaxRowBlock][8];
-        float sv[kInt8MaxRowBlock];
-        float bv[kInt8MaxRowBlock];
-        for (uint r = 0; r < r_dim; ++r) {
-            if (row0 + r >= m_dim) {
-                sv[r] = 0.0f;
-                bv[r] = 0.0f;
-                for (uint k = 0; k < 8; ++k) { qv[r][k] = 0.0f; }
-                continue;
-            }
-            device const ushort* wp =
-                (device const ushort*)(W_row + uint(r) * row_bytes + byte_base);
-            sv[r] = float(s_row[uint(r) * n_groups + g]);
-            bv[r] = float(b_row[uint(r) * n_groups + g]);
-            // Eight weight bytes = four 2-byte-aligned ushort loads. Low
-            // byte first: the resident layout is little-endian and the
-            // element order within a group is byte order.
-            qv[r][0] = float( wp[0]        & 0xFFu);
-            qv[r][1] = float((wp[0] >> 8)  & 0xFFu);
-            qv[r][2] = float( wp[1]        & 0xFFu);
-            qv[r][3] = float((wp[1] >> 8)  & 0xFFu);
-            qv[r][4] = float( wp[2]        & 0xFFu);
-            qv[r][5] = float((wp[2] >> 8)  & 0xFFu);
-            qv[r][6] = float( wp[3]        & 0xFFu);
-            qv[r][7] = float((wp[3] >> 8)  & 0xFFu);
-        }
-
-        #pragma clang loop unroll_count(4)
-        for (uint bi = 0; bi < b_dim; ++bi) {
-            device const half* x_b = x + bi * n_dim;
-            const half4 xa = *((device const half4*)(x_b + elem));
-            const half4 xb = *((device const half4*)(x_b + elem + 4u));
-            const float e0 = float(xa.x), e1 = float(xa.y), e2 = float(xa.z), e3 = float(xa.w);
-            const float e4 = float(xb.x), e5 = float(xb.y), e6 = float(xb.z), e7 = float(xb.w);
-            const float sum = e0 + e1 + e2 + e3 + e4 + e5 + e6 + e7;
-            for (uint r = 0; r < r_dim; ++r) {
-                float dot = 0.0f;
-                dot = fma(qv[r][0], e0, dot); dot = fma(qv[r][1], e1, dot);
-                dot = fma(qv[r][2], e2, dot); dot = fma(qv[r][3], e3, dot);
-                dot = fma(qv[r][4], e4, dot); dot = fma(qv[r][5], e5, dot);
-                dot = fma(qv[r][6], e6, dot); dot = fma(qv[r][7], e7, dot);
-                acc[r][bi] = fma(sv[r], dot, acc[r][bi]);
-                acc[r][bi] = fma(bv[r], sum, acc[r][bi]);
-            }
-        }
-    }
-
-    for (uint g = full_blocks * 4u; g < n_groups; ++g) {
+    // Group by group, two elements per lane: the GEMV's lane partition and
+    // add order. A wider block load per lane (the INT4 kernel's shape) moves
+    // both, and the last bits with them.
+    for (uint g = 0; g < n_groups; ++g) {
         for (uint bi = 0; bi < b_dim; ++bi) {
             device const half* x_b = x + bi * n_dim;
             const float x0 = float(x_b[g * kInt8GroupSize + lane * 2u]);
@@ -181,8 +119,8 @@ kernel void dequant_int8_gemm_simd(
                 if (row0 + r >= m_dim) { continue; }
                 const float s = float(s_row[uint(r) * n_groups + g]);
                 const float b = float(b_row[uint(r) * n_groups + g]);
-                // Two bytes = this lane's two elements of the group, the
-                // INT8 twin of the INT4 tail's one byte holding two nibbles.
+                // Two bytes = this lane's two elements of the group, a
+                // 2-byte-aligned load: resident tensors are not 4-aligned.
                 device const ushort* wp =
                     (device const ushort*)(W_row + uint(r) * row_bytes
                                            + g * kInt8GroupSize + lane * 2u);
