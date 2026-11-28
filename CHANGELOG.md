@@ -20,6 +20,10 @@ when this file gets updated relative to the version bump and the tag.
   server and the C ABI. Image turns decode without a speculative drafter. The
   macOS app does not attach vision sidecars yet. See
   `docs/INKLING2_VISION_PHASE0.md`.
+- Audio: Breeze TTS 2 (`breeze-tts-2-mxfp4`, mlx-community 4-bit) in the app
+  through Swift MLX, on Voice Cloning (clone and voice direction), Voice Design,
+  and Text-to-Speech with speakers S0 to S9. Non-commercial license, accepted
+  before download. See `docs/BREEZE_TTS.md`.
 - Server: llama.cpp-style `timings` and `usage.prompt_tokens_details.cached_tokens`
   on chat completion and completion responses, and `turbospark_text_*` series on
   `GET /v1/metrics`, which every server now serves behind the usual auth.
@@ -63,6 +67,9 @@ when this file gets updated relative to the version bump and the tag.
 - The app's `dflash` drafter choice is now labelled "Block Drafter".
 
 ### Fixed
+- Qwen3-TTS streaming decode no longer adds the codec's transposed-conv
+  bias twice at every chunk boundary (mlx-audio PR 1003), so streamed speech
+  matches a one-call decode.
 - Inkling 2 tool requests failed to render (`tojson` arguments the template
   engine refused).
 

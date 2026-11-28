@@ -169,7 +169,8 @@ show up as a sound match. The meaning floor is untuned.
 ## Create and compare
 
 Text-to-Speech, Voice Cloning, and Voice Design have separate model choices and
-voice settings. [Qwen3-TTS](QWEN3_TTS.md) uses the native Swift MLX provider.
+voice settings. [Qwen3-TTS](QWEN3_TTS.md) and [Breeze TTS 2](BREEZE_TTS.md) use
+the native Swift MLX provider.
 Clone from an imported or saved 1 to 30 second reference region with its exact
 transcript, or explicitly choose voice embedding only. A model with the
 `voice_clone` capability ([MegaTTS3](../crates/audio/src/tts/megatts3/README.md))
@@ -269,6 +270,10 @@ modules and internal codecs are not presented as runnable jobs.
   experimental option; its audio encoder still runs on the CPU.
 - Qwen3-TTS runs Base, CustomVoice, and VoiceDesign MLX checkpoints in Swift.
   The Rust session and HTTP Audio API do not execute this family.
+- Breeze TTS 2 runs in Swift MLX on Voice Cloning (clone and direction, with
+  the exact reference transcript and consent), Voice Design, and
+  Text-to-Speech (speakers S0 to S9). Its license is non-commercial. The Rust
+  session and HTTP Audio API do not execute it.
 - Speaker diarization runs the pinned Core ML pyannote community-1 export
   (`speaker-diarization-coreml`, macOS 15+) from the Advanced page. Once it is
   installed, the Record page's final pass labels each segment of a take with a

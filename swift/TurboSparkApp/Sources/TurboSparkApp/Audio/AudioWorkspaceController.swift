@@ -160,6 +160,7 @@ final class AudioWorkspaceController: ObservableObject {
     @Published var opening: AudioModelOpening?
     var qwenSpeechJob: Qwen3TTSSpeechJob?
     var qwenLoadDependencies = AudioQwenLoadDependencies()
+    var breezeLoad: @Sendable (URL) async throws -> BreezeTTSModel = { try await BreezeTTSModel.fromModelDirectory($0) }
     var voiceIsolatorLoadDependencies = AudioVoiceIsolatorLoadDependencies()
     var referencePreviewTask: Task<Void, Never>?
     var referencePlayer: AVAudioPlayer?
@@ -174,6 +175,9 @@ final class AudioWorkspaceController: ObservableObject {
     @Published var speakerSampleKey: String?
     @Published var session: AudioSession? { didSet { onResidentModelChanged?() } }
     @Published var qwenModel: Qwen3TTSModel?
+    /// Breeze TTS 2 on MLX (BreezeTTSSpeechJob.swift). Released wherever the
+    /// Qwen model is, so two Swift speech models are never resident at once.
+    @Published var breezeModel: BreezeTTSModel?
     /// The offline Voice Isolator on MLX (VoiceIsolatorMLXModel.swift).
     /// Released wherever the Qwen model is.
     var voiceIsolatorModel: VoiceIsolatorMLXModel?
@@ -300,7 +304,7 @@ final class AudioWorkspaceController: ObservableObject {
     /// in the catalog stay usable from Advanced and Voiceover, they are not choices
     /// here. A model absent from this list is never listed on the page.
     nonisolated static let curatedCloneAliases = [
-        "omnivoice-8bit", "qwen3-tts-12hz-17b-base-8bit", "fish-drama3-4bit", "megatts3-f32",
+        "omnivoice-8bit", "qwen3-tts-12hz-17b-base-8bit", "fish-drama3-4bit", "breeze-tts-2-mxfp4", "megatts3-f32",
     ]
     /// `profiles` narrowed to `curatedCloneAliases`, in that order.
     nonisolated static func curatedCloneProfiles(_ profiles: [AudioProfile]) -> [AudioProfile] {
@@ -543,6 +547,13 @@ final class AudioWorkspaceController: ObservableObject {
             speech.mode = Self.speechMode(for: profile)
             recipe.speech = speech
             if !speechSupportsStyle { recipe.speech?.instruction = "" }
+        } else if profile.family == "breeze_tts" && page != .voiceover {
+            // One Breeze profile serves both pages: an instruction designs a
+            // voice there, and directs the reference voice on Voice Cloning.
+            var speech = recipe.speech ?? AudioSpeechSettings()
+            speech.mode = page == .voiceDesign ? .design : .clone
+            if speech.cloneOptions == nil { speech.cloneOptions = AudioCloneOptions() }
+            recipe.speech = speech
         } else if Self.clonesNatively(profile) && page != .voiceover {
             // Keep the reference across model switches; it is the voice.
             // Voiceover runs the same model without one (`runClonesNatively`).
@@ -897,8 +908,8 @@ final class AudioWorkspaceController: ObservableObject {
         if let previous = session { await Task.detached { previous.close() }.value }
         modelAccessURL?.stopAccessingSecurityScopedResource(); modelAccessURL = nil
         session = nil; sessionKey = nil
-        if qwenModel != nil || voiceIsolatorModel != nil || liveVoiceIsolator != nil {
-            qwenModel = nil; voiceIsolatorModel = nil; liveVoiceIsolator = nil
+        if qwenModel != nil || breezeModel != nil || voiceIsolatorModel != nil || liveVoiceIsolator != nil {
+            qwenModel = nil; breezeModel = nil; voiceIsolatorModel = nil; liveVoiceIsolator = nil
             MLX.Memory.clearCache()
         }
         fluidTranscriber = nil
@@ -951,7 +962,7 @@ final class AudioWorkspaceController: ObservableObject {
         if let previous = session { await Task.detached { previous.close() }.value }
         session = nil
         modelAccessURL?.stopAccessingSecurityScopedResource(); modelAccessURL = nil
-        qwenModel = nil; voiceIsolatorModel = nil; liveVoiceIsolator = nil; fluidTranscriber = nil; sessionKey = nil; loadedModelAlias = nil
+        qwenModel = nil; breezeModel = nil; voiceIsolatorModel = nil; liveVoiceIsolator = nil; fluidTranscriber = nil; sessionKey = nil; loadedModelAlias = nil
         MLX.Memory.clearCache()
 
         let token = epoch
@@ -1051,7 +1062,7 @@ final class AudioWorkspaceController: ObservableObject {
     }
 
     var canUnloadModel: Bool {
-        (session != nil || qwenModel != nil || voiceIsolatorModel != nil || liveVoiceIsolator != nil || loadedModelAlias != nil) && !isBusy && !isRecording
+        (session != nil || qwenModel != nil || breezeModel != nil || voiceIsolatorModel != nil || liveVoiceIsolator != nil || loadedModelAlias != nil) && !isBusy && !isRecording
     }
 
     func loadModel() {
@@ -1073,6 +1084,8 @@ final class AudioWorkspaceController: ObservableObject {
                 switch AudioRuntimeProvider(profile) {
                 case .qwenMLX:
                     _ = try await self.residentQwenSession(for: profile)
+                case .breezeMLX:
+                    _ = try await self.residentBreezeSession(for: profile)
                 case .fluidAudio(let family):
                     _ = try await self.residentFluidTranscriber(for: profile, family: family)
                 case .appleSpeech:
@@ -1099,15 +1112,15 @@ final class AudioWorkspaceController: ObservableObject {
         session = nil
         sessionKey = nil
         modelAccessURL = nil
-        let oldQwen = qwenModel
+        let oldQwen = qwenModel != nil || breezeModel != nil
         let oldIsolator = voiceIsolatorModel != nil || liveVoiceIsolator != nil
-        qwenModel = nil; voiceIsolatorModel = nil; liveVoiceIsolator = nil
+        qwenModel = nil; breezeModel = nil; voiceIsolatorModel = nil; liveVoiceIsolator = nil
         fluidTranscriber = nil
         loadedModelAlias = nil
         Task {
             if let old { await Task.detached { old.close() }.value }
             oldAccess?.stopAccessingSecurityScopedResource()
-            if oldQwen != nil || oldIsolator {
+            if oldQwen || oldIsolator {
                 MLX.Memory.clearCache()
             }
         }
@@ -1120,15 +1133,15 @@ final class AudioWorkspaceController: ObservableObject {
             try? await Task.sleep(for: .seconds(300))
             guard !Task.isCancelled, let self, !self.isBusy, !self.isRecording else { return }
             let old = self.session; let oldAccess = self.modelAccessURL
-            let oldQwen = self.qwenModel
+            let oldQwen = self.qwenModel != nil || self.breezeModel != nil
             let oldIsolator = self.voiceIsolatorModel != nil || self.liveVoiceIsolator != nil
             self.session = nil; self.sessionKey = nil; self.modelAccessURL = nil
-            self.qwenModel = nil; self.voiceIsolatorModel = nil; self.liveVoiceIsolator = nil
+            self.qwenModel = nil; self.breezeModel = nil; self.voiceIsolatorModel = nil; self.liveVoiceIsolator = nil
             self.fluidTranscriber = nil
             self.loadedModelAlias = nil
             if let old { await Task.detached { old.close() }.value }
             oldAccess?.stopAccessingSecurityScopedResource()
-            if oldQwen != nil || oldIsolator {
+            if oldQwen || oldIsolator {
                 MLX.Memory.clearCache()
             }
         }
@@ -1183,7 +1196,7 @@ final class AudioWorkspaceController: ObservableObject {
         opening = nil
         if let old = session { DispatchQueue.global(qos: .userInitiated).sync { old.close() } }
         session = nil; sessionKey = nil; modelAccessURL?.stopAccessingSecurityScopedResource(); modelAccessURL = nil
-        qwenModel = nil; voiceIsolatorModel = nil; liveVoiceIsolator = nil; fluidTranscriber = nil; loadedModelAlias = nil
+        qwenModel = nil; breezeModel = nil; voiceIsolatorModel = nil; liveVoiceIsolator = nil; fluidTranscriber = nil; loadedModelAlias = nil
         MLX.Memory.clearCache()
         for url in scratchURLs { try? FileManager.default.removeItem(at: url) }
         scratchURLs.removeAll(); items.removeAll(); activeGeneration = nil; activeRunID = nil; generationProgress = nil

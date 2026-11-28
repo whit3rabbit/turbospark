@@ -24,6 +24,7 @@ struct VoiceCloneEngineCards: View {
             consentCard.id(VoiceCloneStep.consent)
             if controller.selectedProfileNeedsReferenceTranscript {
                 transcriptCard(offersEmbeddingOnly: false).id(VoiceCloneStep.transcript)
+                if controller.selectedProfileTakesInstruction { styleCard }
             } else {
                 if controller.selectedProfile?.family == "omnivoice" { optionalTranscriptCard }
                 qualityCard
@@ -122,6 +123,14 @@ struct VoiceCloneEngineCards: View {
         }
         .disabled(locked)
         .appCardSurface()
+    }
+
+    /// Breeze directs the cloned voice with an optional instruction (voice
+    /// direction); an empty one clones the reference as it is.
+    private var styleCard: some View {
+        SpeechStyleEditor(controller: controller)
+            .disabled(locked)
+            .appCardSurface()
     }
 
     private var qwenSettingsCard: some View {

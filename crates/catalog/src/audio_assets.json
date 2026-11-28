@@ -665,6 +665,101 @@
       }
     },
     {
+      "alias": "breeze-tts-2-mxfp4",
+      "assets": [
+        {
+          "path": "LICENSE",
+          "size": 18856,
+          "sha256": "2a143ae167cb0253d95bafa694e415570dcce336d712230d205c538523bbd855"
+        },
+        {
+          "path": "NOTICE",
+          "size": 146,
+          "sha256": "70bc248b98e5bb527f160c86be56d60ef8c63776c43051273643db036ebee40d"
+        },
+        {
+          "path": "audio_tokenizer/config.json",
+          "size": 2336,
+          "sha256": "ee65bb901c876664ab8707c487157aa1a6ee57c65969b28fb5ec9dc211e68167"
+        },
+        {
+          "path": "audio_tokenizer/model.safetensors",
+          "size": 682293092,
+          "sha256": "836b7b357f5ea43e889936a3709af68dfe3751881acefe4ecf0dbd30ba571258"
+        },
+        {
+          "path": "config.json",
+          "size": 12379,
+          "sha256": "f6871e70a5e937cf23f8ca6eb252ea377c9e489f87f3f7c70b76066ff5768bdf"
+        },
+        {
+          "path": "model.safetensors",
+          "size": 2325487160,
+          "sha256": "e8499e75e043b16d0734897869a124198aca2fa88436eb83c855d58a39fdac0a"
+        },
+        {
+          "path": "special_tokens_map.json",
+          "size": 886,
+          "sha256": "194f265bb588d142a16f27d9576104eb3dab3d7ba9961541d2d6e3d5e77e6470"
+        },
+        {
+          "path": "tokenizer.json",
+          "size": 33386945,
+          "sha256": "d3ec9ac3eb2392389b9f5112e85d8b43316494addb587ba7b7a9d61eac23af96"
+        },
+        {
+          "path": "tokenizer_config.json",
+          "size": 1157960,
+          "sha256": "2c084fd6725c2284e8aa6da095a8d036d48fe79665595bfcd50371821b620e44"
+        }
+      ],
+      "source": {
+        "repository": "mlx-community/Breeze-TTS-2-mlx-4bit",
+        "revision": "3a06d26b172ea4ae1da2f42d708383e9c79d5526"
+      },
+      "metadata": {
+        "task": "text_to_speech",
+        "family": "breeze_tts",
+        "display_name": "Breeze TTS 2 MXFP4",
+        "required_files": [
+          "LICENSE",
+          "NOTICE",
+          "audio_tokenizer/config.json",
+          "audio_tokenizer/model.safetensors",
+          "config.json",
+          "model.safetensors",
+          "special_tokens_map.json",
+          "tokenizer.json",
+          "tokenizer_config.json"
+        ],
+        "sample_rate": 24000,
+        "channels": 1,
+        "languages": [
+          "en",
+          "zh"
+        ],
+        "voices": [
+          "S0",
+          "S1",
+          "S2",
+          "S3",
+          "S4",
+          "S5",
+          "S6",
+          "S7",
+          "S8",
+          "S9"
+        ],
+        "max_input_seconds": 30,
+        "acknowledgments": [
+          {
+            "id": "breezeblue_noncommercial_license",
+            "summary": "Breeze TTS 2 is licensed under the BreezeBlue Research and Non-Commercial License Agreement. It may be used only for research and non-commercial purposes; any commercial use needs a separate written license from BreezeBlue. Copies you share keep LICENSE and NOTICE. The license forbids cloning, imitating or impersonating a real person's voice without that person's explicit consent, so only clone voices you have the right to use."
+          }
+        ]
+      }
+    },
+    {
       "alias": "megatts3-f32",
       "assets": [
         {
