@@ -236,6 +236,13 @@ pub trait SpeculativeProducer: LogitProducer {
         false
     }
 
+    /// Whether [`Self::draft_block`] may return fewer proposals than asked,
+    /// at least one, because the drafter doubts the rest. The loop verifies
+    /// what it got.
+    fn draft_may_cut(&self) -> bool {
+        false
+    }
+
     /// The most proposals a prompt-copy round may verify
     /// (`crate::prompt_copy`), 0 when this producer takes none. A copy round
     /// feeds up to this many proposals plus the confirmed token in one

@@ -462,6 +462,10 @@ impl SpeculativeProducer for RealForwardRunner {
         self.real_dflash.is_some() || self.inkling2_dspark_open()
     }
 
+    fn draft_may_cut(&self) -> bool {
+        self.inkling2_draft_may_cut()
+    }
+
     fn copy_draft_max(&self) -> usize {
         if self.inkling2_dspark_open() {
             self.inkling2_copy_draft_max()
@@ -498,7 +502,7 @@ impl SpeculativeProducer for RealForwardRunner {
                     .map_err(|e| e.to_string())
             })?;
             proposals.clear();
-            proposals.extend_from_slice(&drafted[..block]);
+            proposals.extend_from_slice(&drafted[..block.min(drafted.len())]);
             return Ok(());
         }
         let want = self.real_dflash.as_ref().map_or(0, |d| d.block);

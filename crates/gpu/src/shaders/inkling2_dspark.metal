@@ -364,6 +364,89 @@ kernel void dspark_markov_logits(
     }
 }
 
+// `dspark_markov_logits` plus each group's softmax denominator, for the
+// verify-width cut (`TURBOSPARK_INKLING2_VERIFY_CUT`). A separate kernel so
+// the default draft runs the same pipeline as before.
+kernel void dspark_markov_logits_prob(
+    device const half*  base    [[buffer(0)]],
+    device const half*  fold_b  [[buffer(1)]],
+    device const half*  fold_t  [[buffer(2)]],
+    device const half*  latent  [[buffer(3)]],
+    device float*       part_v  [[buffer(4)]],
+    device uint*        part_i  [[buffer(5)]],
+    constant uint&      n_vocab [[buffer(6)]],
+    constant uint&      stride  [[buffer(7)]],
+    constant uint&      rank    [[buffer(8)]],
+    device float*       part_p  [[buffer(9)]],
+    constant float&     softcap [[buffer(10)]],
+    uint                tgi     [[threadgroup_position_in_grid]],
+    uint                tid     [[thread_position_in_threadgroup]],
+    uint                sg      [[simdgroup_index_in_threadgroup]],
+    uint                lane    [[thread_index_in_simdgroup]]
+) {
+    threadgroup float lat[256];
+    threadgroup float sv[8];
+    threadgroup uint si[8];
+    for (uint j = tid; j < rank; j += 256u) lat[j] = float(latent[j]);
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    const uint v = tgi * 256u + tid;
+    float z = -INFINITY;
+    if (v < n_vocab) {
+        float acc = float(base[v]) + float(fold_b[v]);
+        for (uint j = 0; j < rank; ++j) acc = fma(float(fold_t[ulong(j) * stride + v]), lat[j], acc);
+        z = acc;
+    }
+    const float own = z;
+    uint idx = v;
+    for (uint off = 16u; off > 0u; off >>= 1u) {
+        const float oz = simd_shuffle_down(z, off);
+        const uint oi = simd_shuffle_down(idx, off);
+        if (oz > z || (oz == z && oi < idx)) { z = oz; idx = oi; }
+    }
+    if (lane == 0u) { sv[sg] = z; si[sg] = idx; }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (tid == 0u) {
+        float bz = sv[0];
+        uint bi = si[0];
+        for (uint g = 1; g < 8u; ++g) {
+            if (sv[g] > bz || (sv[g] == bz && si[g] < bi)) { bz = sv[g]; bi = si[g]; }
+        }
+        part_v[tgi] = bz;
+        part_i[tgi] = bi;
+        sv[0] = bz;
+    }
+    // Sum of exp(softcapped - softcapped group max). An entry past the
+    // vocabulary is skipped, not scored: softcap(-inf) is -softcap, not zero.
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    float e = 0.0f;
+    if (v < n_vocab) e = exp(softcap * tanh(own / softcap) - softcap * tanh(sv[0] / softcap));
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    const float total = dsp_tg_sum(e, sv, tid, sg, lane);
+    if (tid == 0u) part_p[tgi] = total;
+}
+
+// probs[step] = softmax probability of the picked token over the softcapped
+// scores, from the per-group maxima and denominators.
+kernel void dspark_markov_prob(
+    device const float* part_v  [[buffer(0)]],
+    device const float* part_p  [[buffer(1)]],
+    device float*       probs   [[buffer(2)]],
+    constant uint&      n_part  [[buffer(3)]],
+    constant uint&      step    [[buffer(4)]],
+    constant float&     softcap [[buffer(5)]],
+    uint                tid     [[thread_position_in_grid]]
+) {
+    if (tid != 0u) return;
+    float zmax = part_v[0];
+    for (uint p = 1u; p < n_part; ++p) zmax = max(zmax, part_v[p]);
+    const float top = softcap * tanh(zmax / softcap);
+    float sum = 0.0f;
+    for (uint p = 0u; p < n_part; ++p) {
+        sum += part_p[p] * exp(softcap * tanh(part_v[p] / softcap) - top);
+    }
+    probs[step] = 1.0f / sum;
+}
+
 // Reduces the partials; writes the token to `last[0]` and `proposals[step]`.
 kernel void dspark_markov_argmax(
     device const float* part_v    [[buffer(0)]],

@@ -37,6 +37,41 @@ use crate::real_forward_utils::entry;
 
 const DSPARK_ENV: &str = "TURBOSPARK_INKLING2_DSPARK";
 const DFLASH2_ENV: &str = "TURBOSPARK_INKLING2_DFLASH2";
+const CUT_ENV: &str = "TURBOSPARK_INKLING2_VERIFY_CUT";
+
+/// The confidence cut's threshold, `None` (the default) when off. DSpark only.
+/// Drafting stays lossless at any value: the cut only shortens the round.
+fn verify_cut() -> Option<f32> {
+    static CUT: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
+    *CUT.get_or_init(|| {
+        let v = std::env::var(CUT_ENV).ok()?;
+        match v.trim().parse::<f32>() {
+            Ok(t) if t > 0.0 && t < 1.0 => {
+                foundation::engaged!("inkling2_verify_cut");
+                Some(t)
+            }
+            _ => {
+                eprintln!("{CUT_ENV}={v:?} is not a number between 0 and 1; the cut is off");
+                None
+            }
+        }
+    })
+}
+
+/// Proposals to verify: the leading ones whose running probability product
+/// stays at or above `theta`, never fewer than one.
+fn cut_len(probs: &[f32], theta: f32) -> usize {
+    let mut product = 1.0f32;
+    probs
+        .iter()
+        .take_while(|&&p| {
+            product *= p;
+            product >= theta
+        })
+        .count()
+        .max(1)
+}
+
 pub(super) const DRAFT_HEAD: &str = "model.llm.unembed.weight";
 
 /// Which block drafter a directory holds.
@@ -292,6 +327,9 @@ pub(super) struct MarkovHead {
     latent: gpu::MetalBuffer,
     part_v: gpu::MetalBuffer,
     part_i: gpu::MetalBuffer,
+    /// Softmax denominators and picked-token probabilities (verify cut only).
+    part_p: gpu::MetalBuffer,
+    probs: gpu::MetalBuffer,
     last: gpu::MetalBuffer,
     proposals: gpu::MetalBuffer,
 }
@@ -405,6 +443,8 @@ impl DsparkState {
             latent: half(rank),
             part_v: f32b(groups),
             part_i: f32b(groups),
+            part_p: f32b(groups),
+            probs: f32b(b),
             last: f32b(1),
             proposals: f32b(b),
         };
@@ -1126,8 +1166,15 @@ impl RealForwardRunner {
         Ok(())
     }
 
+    /// Whether a draft may return fewer proposals than the round asked for.
+    pub(crate) fn inkling2_draft_may_cut(&self) -> bool {
+        self.inkling2_drafter_name() == Some(Inkling2Drafter::DSpark.name())
+            && verify_cut().is_some()
+    }
+
     /// One block draft anchored at `anchor` (the token at `base`, not yet
-    /// fed): `block - 1` proposals for `base + 1 ..`.
+    /// fed): `block - 1` proposals for `base + 1 ..`, fewer under the verify
+    /// cut.
     pub(crate) fn inkling2_dspark_draft(
         &mut self,
         anchor: i32,
@@ -1326,6 +1373,8 @@ impl RealForwardRunner {
         .map_err(g)?;
         gpu::write_buffer_bytes(&m.mstate, 0, &vec![0u8; c.rank * 4]);
         gpu::write_buffer_bytes(&m.last, 0, &(anchor as u32).to_le_bytes());
+        let cut = verify_cut();
+        let softcap = self.arch.final_logit_softcap as f32;
         let in_len = 2 * c.rank + 2 * h;
         for i in 0..b - 1 {
             gpu::encode_dspark_markov_input(
@@ -1376,6 +1425,7 @@ impl RealForwardRunner {
                 unpadded,
                 vocab as u32,
                 c.rank as u32,
+                cut.map(|_| ((&m.part_p, 0), softcap)),
             )
             .map_err(g)?;
             gpu::encode_dspark_markov_argmax(
@@ -1387,15 +1437,19 @@ impl RealForwardRunner {
                 (&m.proposals, 0),
                 parts,
                 i as u32,
+                cut.map(|_| ((&m.part_p, 0), (&m.probs, 0), softcap)),
             )
             .map_err(g)?;
         }
         pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
         // The proposals are u32 token ids; read the words and reinterpret.
-        let out: Vec<i32> = gpu::read_f32_buffer_at(&m.proposals, 0, b - 1)
+        let mut out: Vec<i32> = gpu::read_f32_buffer_at(&m.proposals, 0, b - 1)
             .into_iter()
             .map(|v| v.to_bits() as i32)
             .collect();
+        if let Some(theta) = cut {
+            out.truncate(cut_len(&gpu::read_f32_buffer_at(&m.probs, 0, b - 1), theta));
+        }
         let d = self
             .real_inkling2
             .as_mut()
@@ -1403,5 +1457,22 @@ impl RealForwardRunner {
             .expect("checked");
         d.ctx_rows = base;
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cut_len;
+
+    #[test]
+    fn the_cut_follows_the_running_product_and_keeps_one() {
+        // 0.9, then 0.45, then 0.405.
+        let p = [0.9, 0.5, 0.9];
+        assert_eq!(cut_len(&p, 0.4), 3);
+        assert_eq!(cut_len(&p, 0.5), 1);
+        assert_eq!(cut_len(&p, 0.43), 2);
+        assert_eq!(cut_len(&p, 0.95), 1);
+        // A later confident token does not come back after the product fell.
+        assert_eq!(cut_len(&[0.1, 1.0, 1.0], 0.5), 1);
     }
 }

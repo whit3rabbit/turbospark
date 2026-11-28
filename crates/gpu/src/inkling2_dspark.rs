@@ -346,6 +346,8 @@ pub fn encode_dspark_markov_gate(
 
 /// Corrected logits and per-group argmax partials over `n_vocab` entries;
 /// `fold_t` is `[rank][stride]`. Returns the number of partials.
+/// `prob` is `(part_p, softcap)`: also write each group's softmax denominator,
+/// for [`encode_dspark_markov_argmax`]'s probability.
 #[allow(clippy::too_many_arguments)]
 pub fn encode_dspark_markov_logits(
     context: &mut MetalContext,
@@ -359,27 +361,38 @@ pub fn encode_dspark_markov_logits(
     n_vocab: u32,
     stride: u32,
     rank: u32,
+    prob: Option<(Buf<'_>, f32)>,
 ) -> Result<u32, GpuError> {
     if rank == 0 || rank > DSPARK_MAX_RANK || stride < n_vocab {
         return Err(bad("markov logits: rank or stride"));
     }
     let groups = n_vocab.div_ceil(DSPARK_LOGITS_PER_GROUP);
-    let p = pipeline(context, "dspark_markov_logits")?;
-    pass.encode_threadgroups(
-        &p,
-        &binds(&[base, fold_b, fold_t, latent, part_v, part_i]),
-        &[
-            (u32_bytes(&n_vocab), 6),
-            (u32_bytes(&stride), 7),
-            (u32_bytes(&rank), 8),
-        ],
-        u64::from(groups),
-        256,
-    );
+    let mut buffers = binds(&[base, fold_b, fold_t, latent, part_v, part_i]);
+    let sizes = [
+        (u32_bytes(&n_vocab), 6),
+        (u32_bytes(&stride), 7),
+        (u32_bytes(&rank), 8),
+    ];
+    match prob {
+        None => {
+            let p = pipeline(context, "dspark_markov_logits")?;
+            pass.encode_threadgroups(&p, &buffers, &sizes, u64::from(groups), 256);
+        }
+        Some(((part_p, offset), softcap)) => {
+            let p = pipeline(context, "dspark_markov_logits_prob")?;
+            buffers.push((part_p, 9, offset));
+            let cap = softcap.to_le_bytes();
+            let mut bytes = sizes.to_vec();
+            bytes.push((&cap[..], 10));
+            pass.encode_threadgroups(&p, &buffers, &bytes, u64::from(groups), 256);
+        }
+    }
     Ok(groups)
 }
 
 /// Reduces the partials to the step's token: `last[0]` and `proposals[step]`.
+/// `prob` is `(part_p, probs, softcap)`: also write `probs[step]`, the softmax
+/// probability of that token.
 #[allow(clippy::too_many_arguments)]
 pub fn encode_dspark_markov_argmax(
     context: &mut MetalContext,
@@ -390,6 +403,7 @@ pub fn encode_dspark_markov_argmax(
     proposals: Buf<'_>,
     n_part: u32,
     step: u32,
+    prob: Option<(Buf<'_>, Buf<'_>, f32)>,
 ) -> Result<(), GpuError> {
     let p = pipeline(context, "dspark_markov_argmax")?;
     pass.encode_threadgroups(
@@ -399,6 +413,21 @@ pub fn encode_dspark_markov_argmax(
         1,
         256,
     );
+    if let Some((part_p, probs, softcap)) = prob {
+        let p = pipeline(context, "dspark_markov_prob")?;
+        let cap = softcap.to_le_bytes();
+        pass.encode_threadgroups(
+            &p,
+            &binds(&[part_v, part_p, probs]),
+            &[
+                (u32_bytes(&n_part), 3),
+                (u32_bytes(&step), 4),
+                (&cap[..], 5),
+            ],
+            1,
+            256,
+        );
+    }
     Ok(())
 }
 

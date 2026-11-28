@@ -639,10 +639,14 @@ fn run_speculative<P: SpeculativeProducer>(
             producer
                 .draft_block(next, base, round_block, &mut proposals)
                 .map_err(RuntimeError::Producer)?;
-            assert_eq!(
-                proposals.len(),
-                round_block,
-                "draft_block must populate exactly round_block proposals ({round_block} expected, {} produced)",
+            let fewest = if producer.draft_may_cut() {
+                1
+            } else {
+                round_block
+            };
+            assert!(
+                (fewest..=round_block).contains(&proposals.len()),
+                "draft_block must populate {fewest} to {round_block} proposals ({} produced)",
                 proposals.len()
             );
         } else {

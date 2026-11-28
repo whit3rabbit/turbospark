@@ -1313,6 +1313,36 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
   encode with the GPU needs every position, KV cursor and rollback count
   GPU-resident, a redesign of the decode flow for at most that 5%. Declined
   for now; the readback is not the cost.
+- MEASURED, NO GAIN SHOWN (2026-11-27): DSpark confidence cut of the
+  verify width, `TURBOSPARK_INKLING2_VERIFY_CUT=<0..1>`, default off. With a
+  depth of 7, verify only the leading proposals whose running probability
+  product stays at or above the value (at least one). The idea is from a
+  vLLM-on-GB10 write-up (runtimenotes.com, 2026-11-27).
+  - Offline (`examples/inkling2_dspark_accept.rs`, `INKLING2_SPEC_PROBS`,
+    mlx4, 248 positions each on prose, code, edit, long): the product ranks
+    acceptance at AUC 0.79 to 0.87 (the write-up had 0.91 to 0.94). Verify
+    cost by depth 1..7 on the code prompt: 34, 39, 45, 56, 61, 67, 74 ms
+    (draft 10 ms at every depth). A replay of those costs predicted 4 to 11%
+    over fixed depth 3 at a value near 0.6, held-out prompts included.
+  - Runtime: exact. Every arm committed the plain greedy stream on all four
+    prompts, and the round-depth mix matched the replay on code.
+  - Speed: not what the replay said. In-process timings, two interleaved
+    rounds, not frozen rows, not a paired tslab verdict. The prompt-copy-on
+    run (20:15 to 20:41) overlapped another session's compiles and tests, so
+    treat it, and the copy-round explanation drawn from it, as unconfirmed.
+    The acceptance study, the round costs and the prompt-copy-off run fall
+    outside that window. With prompt copy on,
+    depth 7 plus 0.6 tied fixed depth 3: a copy round starts at the depth cap,
+    so its verify went from about 75 to 125 ms on prose. With prompt copy off:
+    prose +3.6%, code, long and edit within run-to-run spread (the cut arm's
+    verify time on long and edit moved by 10 to 19% between identical runs).
+  - The replay left out two more costs: the probability adds about 0.6 to
+    0.9 ms to a draft, and verify rows cost more at long context than on the
+    50-token prompt the costs came from.
+  - Exactness gate for the kernels:
+    `crates/gpu/tests/inkling2_dspark_markov_prob.rs`. DFlash2 has no cut.
+  - Open before a retry: start copy rounds below the cap when the cut is on,
+    and measure round costs per context length.
 - RESEARCH (2026-11-22): mtplx (github.com/youssofal/mtplx, Apache-2.0, MLX)
   runs Inkling 2 Mini with the same bundled DSpark drafter. Our port already
   has its Markov head (`dspark_markov_*`), so the draft logic matches.

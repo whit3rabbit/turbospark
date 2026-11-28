@@ -688,6 +688,20 @@ pub const KNOBS: &[Knob] = &[
         engagement: &[off("0", "spec_prompt_copy")],
     },
     Knob {
+        // Inkling 2 DSpark: verify only the leading proposals whose running
+        // probability product stays at or above this value. Lossless (the
+        // round is only shorter), default off.
+        name: "inkling2_verify_cut",
+        env: "TURBOSPARK_INKLING2_VERIFY_CUT",
+        values: &["<unset>", "0.6"],
+        read_at: ReadAt::ProcessCached,
+        exactness: Exactness::BitExact,
+        families: &["inkling2_loop"],
+        quotable: true,
+        doc: "docs/INKLING2_PHASE0.md",
+        engagement: &[on("0.6", "inkling2_verify_cut")],
+    },
+    Knob {
         // Inkling 2 GGUF installs: a layer whose gate-up and down are both
         // NVFP4 opens as the native NVFP4 kind (the same ggml block bytes),
         // so it runs the native and grouped pairs instead of the generic

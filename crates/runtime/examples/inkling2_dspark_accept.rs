@@ -7,6 +7,13 @@
 //!     <config.json with mtp_config> <prompt ids> <generate N>
 //! ```
 //!
+//! The target is a BF16 install or an MLX affine 4-bit one (its embedding and
+//! head are dequantized here). With `INKLING2_SPEC_PROBS=<path>` the report
+//! also writes one JSON line per drafted position: the accepted length and,
+//! per proposal, the drafter's softmax probability of the token it picked.
+//! That is the input for replaying a confidence cut of the verify width. A
+//! `.chat.txt` prompt file is encoded as one templated user turn.
+//!
 //! The target decodes the prompt and `N` greedy tokens through the Metal flow,
 //! recording each position's four context taps (the stream entering
 //! applications 5, 23 and 41, and the final-norm output). Then, at every
@@ -31,6 +38,7 @@
 //! tokenized without a template.
 
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::Path;
 
 use half::{bf16, f16};
@@ -160,7 +168,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() != 6 {
         eprintln!(
-            "usage: {} <bf16 install> <mtp.safetensors> <config.json> <prompt ids> <N>",
+            "usage: {} <install> <mtp.safetensors> <config.json> <prompt ids> <N>",
             args[0]
         );
         std::process::exit(2);
@@ -236,7 +244,23 @@ fn main() {
         )
         .expect("open target with the Metal drafter")
     } else {
-        RealForwardRunner::open_with_max_context(install, arch.clone(), 4096).expect("open target")
+        // Streamed: only the taps are needed, and resident experts would hold
+        // about 15.7 GB for nothing.
+        RealForwardRunner::open_with_residency(
+            install,
+            arch.clone(),
+            4096,
+            turbospark_runtime::ExpertCacheSlots::Auto,
+            turbospark_runtime::DraftPolicies {
+                mtp: turbospark_runtime::MtpDraftPolicy::Off,
+                dflash: turbospark_runtime::DflashDraftPolicy::Off,
+            },
+            turbospark_runtime::SteeringPolicy::off(),
+            1,
+            turbospark_runtime::KvQuant::Off,
+            turbospark_runtime::ExpertResidency::Streamed,
+        )
+        .expect("open target")
     };
     let mut tokens = prompt.clone();
     let mut taps: Vec<Vec<f32>> = Vec::new();
@@ -288,11 +312,42 @@ fn main() {
     let file = std::fs::read(install.join("model_weights.bin")).unwrap();
     let target = |name: &str| -> Vec<f32> {
         let e = &index.entries[name];
-        assert_eq!(e.dtype, 1, "{name}: the harness reads a BF16 install");
-        file[e.file_offset as usize..(e.file_offset + e.size_bytes) as usize]
-            .chunks_exact(2)
-            .map(|b| bf16::from_bits(u16::from_le_bytes([b[0], b[1]])).to_f32())
-            .collect()
+        let bytes = |off: u64, len: u64| &file[off as usize..(off + len) as usize];
+        let words = |off: u64, len: u64| -> Vec<u16> {
+            bytes(off, len)
+                .chunks_exact(2)
+                .map(|b| u16::from_le_bytes([b[0], b[1]]))
+                .collect()
+        };
+        let packed = bytes(e.file_offset, e.size_bytes);
+        match e.dtype {
+            1 => words(e.file_offset, e.size_bytes)
+                .into_iter()
+                .map(|b| bf16::from_bits(b).to_f32())
+                .collect(),
+            // MLX affine 4-bit, group 64, BF16 scales and biases.
+            4 => {
+                let cols = e.shape.1 as usize;
+                let scales = words(e.scale_offset, e.scale_size);
+                let biases = words(e.bias_offset, e.bias_size);
+                packed
+                    .chunks_exact(cols / 2)
+                    .zip(scales.chunks_exact(cols / 64))
+                    .zip(biases.chunks_exact(cols / 64))
+                    .flat_map(|((p, s), b)| {
+                        compute::quant::dequantize_int4_affine(
+                            &compute::quant::Int4AffineRow {
+                                packed: p.to_vec(),
+                                scales: s.to_vec(),
+                                biases: b.to_vec(),
+                            },
+                            cols,
+                        )
+                    })
+                    .collect()
+            }
+            other => panic!("{name}: the harness reads BF16 or affine 4-bit, not dtype {other}"),
+        }
     };
     let embed = target("model.llm.embed.weight");
     let embed_norm = target("model.llm.embed_norm.weight");
@@ -362,6 +417,8 @@ fn main() {
     let mut agree_pos = 0usize;
     let mut metal_hist = vec![0usize; block];
     let t1 = std::time::Instant::now();
+    let mut probs_out = std::env::var_os("INKLING2_SPEC_PROBS")
+        .map(|path| std::fs::File::create(path).expect("create INKLING2_SPEC_PROBS"));
     for t in p..(p + n_gen).saturating_sub(block) {
         while built < t {
             add_context(built, &mut ctx_k, &mut ctx_v);
@@ -491,6 +548,7 @@ fn main() {
         let mut accepted = 0usize;
         let mut still = true;
         let mut cpu_props: Vec<i32> = Vec::with_capacity(block - 1);
+        let mut probs: Vec<f32> = Vec::with_capacity(block - 1);
         for i in 0..block - 1 {
             let mut input = state.clone();
             input.extend_from_slice(&w1[last * c.rank..(last + 1) * c.rank]);
@@ -506,13 +564,15 @@ fn main() {
             }
             let bias = matmul(&latent, 1, &fold_w, c.unpadded, c.rank);
             let row = &base[i * c.unpadded..(i + 1) * c.unpadded];
+            let score = |a: usize| c.softcap * ((row[a] + bias[a] + fold_b[a]) / c.softcap).tanh();
             let best = (0..c.unpadded)
-                .max_by(|&a, &b| {
-                    let sa = c.softcap * ((row[a] + bias[a] + fold_b[a]) / c.softcap).tanh();
-                    let sb = c.softcap * ((row[b] + bias[b] + fold_b[b]) / c.softcap).tanh();
-                    sa.total_cmp(&sb)
-                })
+                .max_by(|&a, &b| score(a).total_cmp(&score(b)))
                 .unwrap();
+            if probs_out.is_some() {
+                let top = score(best);
+                let sum: f32 = (0..c.unpadded).map(|a| (score(a) - top).exp()).sum();
+                probs.push(1.0 / sum);
+            }
             if still && best as i32 == tokens[t + 1 + i] {
                 accepted += 1;
                 per_pos[i] += 1;
@@ -536,6 +596,10 @@ fn main() {
                 .take_while(|(i, &p)| p == tokens[t + 1 + i])
                 .count();
             metal_hist[acc] += 1;
+        }
+        if let Some(out) = probs_out.as_mut() {
+            let line = serde_json::json!({"t": t - p, "accepted": accepted, "probs": probs});
+            writeln!(out, "{line}").expect("write INKLING2_SPEC_PROBS");
         }
         let _ = c.vocab;
         accepted_hist[accepted] += 1;
