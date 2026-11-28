@@ -5,6 +5,17 @@ The evaluator only gets stricter, and `run-experiment` refuses to grade a tree
 that changes `crates/lab`, so lab changes are their own PRs, never part of an
 experiment.
 
+## Contents
+
+- [A new kernel bench](#a-new-kernel-bench)
+- [A runtime switch the lab should know](#a-runtime-switch-the-lab-should-know)
+- [A knob that is a kernel mode](#a-knob-that-is-a-kernel-mode)
+- [A family finding, recommendation or sweep](#a-family-finding-recommendation-or-sweep)
+- [A new ledger kind](#a-new-ledger-kind)
+- [A new command](#a-new-command)
+- [A new built-in workflow](#a-new-built-in-workflow)
+- [Checks before a lab PR](#checks-before-a-lab-pr)
+
 ## A new kernel bench
 
 1. Add `crates/lab/src/kernel/<name>.rs` with a type implementing

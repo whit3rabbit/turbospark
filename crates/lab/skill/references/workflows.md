@@ -24,7 +24,7 @@ tslab workflow new-family --model M --experiment E --resume <run>
 | `spec-depth` | chain capture, MTP arms at two blocks with round stats, depth replay priced from the ledger | an install with an MTP head |
 | `family-sweep` | capabilities, the family profile, a null floor, every profile sweep whose `when` holds, report | `--model`; the profile's sweeps (`tslab family --model M`) |
 | `audio-survey` | capabilities, the family profile, hashed audio kernel benches, profile of a job (music or speak, by the install's task), null floor | an audio install; `--var job=PATH` or `--var speak_job=PATH` to change the job |
-| `fill-ladder` | paired A/B of a switch at 0.3K, 8K and 32K tokens of real KV fill, with a per-context-bucket ratio table and footprints | `--var candidate=KNOB=V`; raise `--var context=` and edit the plan for longer rungs (the corpus ends near 100K tokens) |
+| `fill-ladder` | paired A/B of a switch at 0.3K, 8K and 32K tokens of real KV fill (`corpus:` prompts, so a checkout only), with a per-context-bucket ratio table and footprints. It has no null step: run `ab --null` at each rung's workload first, or the floor is the 2% default | `--var candidate=KNOB=V`, `--var baseline=` (default `baseline`); raise `--var context=` and edit the plan for longer rungs (the corpus ends near 100K tokens) |
 | `slot-curve` | paired sweep of 16, 64 and 96 expert slots against 32 on a streamed MoE, with decode hit rate | an MoE install |
 | `report` | export (JSON, paths redacted) and HTML beside the ledger | `--experiment` |
 

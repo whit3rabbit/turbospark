@@ -1,5 +1,18 @@
 # Reading tslab results
 
+## Contents
+
+- [Verdicts](#verdicts)
+- [Sweeps](#sweeps)
+- [The compare view](#the-compare-view)
+- [Dirty runs](#dirty-runs)
+- [Check the output before the timings](#check-the-output-before-the-timings)
+- [Memory pressure](#memory-pressure)
+- [Pricing a route against the model run](#pricing-a-route-against-the-model-run)
+- [Quoting a number](#quoting-a-number)
+- [Phase buckets and blocks](#phase-buckets-and-blocks)
+- [Kernel curves](#kernel-curves)
+
 ## Verdicts
 
 | Verdict | Means | Do |
@@ -31,7 +44,9 @@ the sweeps and the verdict forests, with labels prefixed by the experiment.
 A shared axis makes a difference visible, not significant: the verdict
 board under the charts holds the paired results, and two experiments' bars
 on one chart were not paired with each other. Hollow marks stay what they
-are, runs the host guard rejected.
+are, runs the host guard rejected. A group renamed `<group> [<id>]` was
+split because its points have different methodology ids: they were measured
+differently, so do not compare across the split.
 
 ## Dirty runs
 
@@ -48,6 +63,23 @@ say why it does not count:
   name. Find out why before anything else.
 - `worker status refused`: the install cannot run that arm. `record.refusal`
   says what.
+- `synthetic acceptance: the output is wrong by design, never quotable`: a
+  `spec-rounds` arm forced the acceptance rate. Expected.
+- Only with the opt-in rules set (`--max-compressions`,
+  `--max-swap-growth-mib`, `--require-full-power`,
+  `--require-normal-pressure`): `compressor made N pages, over M`,
+  `swap grew N MiB, over M`, `Low Power Mode was on`, `memory pressure above
+  normal or unreadable`, or `... unreadable` when the counter could not be
+  read. A `~ballast` arm applies a 256 MiB swap-growth rule on its own, and
+  refuses to start (`refusing ballast: ...`) over 2048 MiB of swap in use.
+- Server rows (`serve_bench`, `soak`) list theirs in `ineligible`:
+  `N request(s) failed`, `N token accounting mismatch(es)` (the server's token
+  count differs from what the client received), plus the host reasons.
+
+`ab` and `sweep` also print a stderr warning when the baseline is not the
+default route (`missing ...`, `extra ...`). It does not dirty a run; the same
+facts are in the record's `baseline_route`. A baseline off the default route
+measures a candidate against something no user runs.
 
 ## Check the output before the timings
 

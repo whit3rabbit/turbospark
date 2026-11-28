@@ -89,5 +89,45 @@
       "Checks each run record's engaged list: attn_decode_gqa on the default arm with no env set, attn_decode_barrier on the candidate",
       "Reads the metric named in the ab header line before quoting the number"
     ]
+  },
+  {
+    "skills": [
+      "tslab"
+    ],
+    "query": "I just installed a new MoE family nobody has measured. Run the slot sweep and tell me which setting to ship.",
+    "files": [],
+    "expected_behavior": [
+      "Runs `tslab sanity --model M` (or reads decoded tokens through the chat template) before trusting any sweep result",
+      "Treats a sanity miss as a finding to report before timing anything, not as a reason to skip the check",
+      "Reads an expert hit rate near 99% or an outsized MoE win as a possible symptom of degenerate routing, not as a result",
+      "Runs preflight and a null calibration before the sweep and reports the sweep's `best` with its ledger id, or `best: none`",
+      "Does not flip a default or write the result into docs/BENCHMARKS.md"
+    ]
+  },
+  {
+    "skills": [
+      "tslab"
+    ],
+    "query": "tslab sanity exited 1 on my install. Is tslab broken? Just rerun it until it passes.",
+    "files": [],
+    "expected_behavior": [
+      "Reads the `--json` envelope: `ok: true` with exit 1 is a failed check, `ok: false` with an `error` is a tool error",
+      "Names the failing cases from the `sanity` record instead of rerunning until it passes",
+      "Says a miss on a new family is a finding to read, not proof of a bug, and that `garbage_flag` and `think_leak` are advisory",
+      "Does not loosen or edit `workloads/golden.json` to make the case pass"
+    ]
+  },
+  {
+    "skills": [
+      "tslab"
+    ],
+    "query": "Does my change make turbospark-server faster under concurrent load? The server is running on 127.0.0.1:8080.",
+    "files": [],
+    "expected_behavior": [
+      "Uses `tslab serve-bench --server http://127.0.0.1:8080` (open-loop arrivals with `--rate` if load matters), not `ab`, since a server claim needs the HTTP path",
+      "Runs preflight and recognizes the targeted `turbospark-server` as expected in its busy list, clearing only the other processes",
+      "Compares a baseline server and a changed server in separate serve-bench runs under the same flags and says the rows are not a paired verdict",
+      "Reports exit 3 as a failed request or token accounting mismatch to investigate, and never retries or lowers load to make a run pass"
+    ]
   }
 ]

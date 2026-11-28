@@ -1,6 +1,6 @@
 ---
 name: tslab
-description: Measures TurboSpark model installs on an Apple Silicon Mac with tslab, the kernel and method evaluator from crates/lab, using a TurboSpark checkout or the bundled binaries. Use when asked to profile an install, bench or A/B a Metal kernel or a knob (a TURBOSPARK_* switch), survey a new model family, trace GPU work, price speculative decoding, measure an audio pipeline, look up pinned kernel settings, run the program.md autoresearch loop, read, export or plot ledgers (~/.turbospark/lab), or add a bench, knob, ledger kind or workflow to tslab. Not for freezing rows in docs/BENCHMARKS.md.
+description: Measures TurboSpark model installs on an Apple Silicon Mac with tslab, the kernel and method evaluator from crates/lab, using a TurboSpark checkout or the bundled binaries. Use when asked to profile an install, bench or A/B a Metal kernel or a knob (a TURBOSPARK_* switch), survey a new model family, trace GPU work, price speculative decoding, measure an audio pipeline, check output quality (golden answers, digests, KL against llama.cpp), load-test the HTTP server, look up pinned kernel settings, run the program.md autoresearch loop, read, export or plot ledgers (~/.turbospark/lab), or add a bench, knob, ledger kind or workflow to tslab. Not for freezing rows in docs/BENCHMARKS.md.
 ---
 
 # tslab
@@ -69,6 +69,16 @@ flag), 2 bare `tslab` with no arguments, 3 discard, 4 inconclusive. On 4
 the host was busy: fix it and rerun the same command. Never revert on 4, and
 never rerun a NOISE verdict until it wins.
 
+Some commands reuse the codes, with `ok: true` in the envelope: `sanity`,
+`quant-ab` and `release-gate` exit 1 when a check failed (a finding, not a
+tool error), and `hash-diff`, `anchor`, `image-stage`, `serve-bench` and
+`soak` exit 3 when an output changed or a request failed. Read `ok` and the
+record before reading the code.
+
+On a family you have not measured before, run `$TSLAB sanity --model M`
+before the first sweep. A forward pass that decodes garbage can still run
+fast and win (reading-results.md, "Check the output before the timings").
+
 ## Which reference to read
 
 | Task | Read |
@@ -98,6 +108,10 @@ $TSLAB sweep --model M --sweep all --experiment E --json   # every profile sweep
 $TSLAB sweep --model M --baseline plain --candidate mtp2~mtp:2 --candidate mtp4~mtp:4 --metric decode_tok_s --experiment E
 $TSLAB family --family qwen35 --findings         # the recorded findings with their provenance
 $TSLAB serve --open                              # the read-only dashboard over every ledger (never takes the lock)
+$TSLAB sanity --model M --experiment E           # golden answers through the chat template; exit 1 on a miss
+$TSLAB idle-gap --model M --experiment E         # first decode step after idle gaps; digests must match the none run
+$TSLAB kernel --model M --bench gdn_trajectory --experiment E   # GDN route equivalence over many steps, untimed
+$TSLAB serve-bench --server http://127.0.0.1:PORT --experiment E   # the HTTP path; a server claim needs this, not ab
 ```
 
 `tslab knobs` lists the switches an arm can set (`KNOB=V`) and, below them,
@@ -107,8 +121,11 @@ prices each.
 ## What needs a checkout
 
 From the zip these refuse or degrade, so do not plan on them: `gate`,
-`run-experiment` and `confirm` (they diff and build the source), `corpus:N`
-prompts (they read the repository's docs, so use `protocol:` prompts), and
+`run-experiment` and `confirm` (they diff and build the source),
+`xengine-kl` (it runs `cargo test` and a script from the tree, and needs
+`uv`), `image-stage` fixtures (the repository's `scripts/z_image_capture.py`), `corpus:N`
+prompts and the `fill-ladder` workflow that uses them (they read the
+repository's docs, so use `protocol:` prompts), and
 the git revision in run provenance (each run still records the binary's
 SHA-256, which identifies the build). The zip's binaries measure the build
 they came from (`BUILD.txt`). A result about a newer build needs binaries

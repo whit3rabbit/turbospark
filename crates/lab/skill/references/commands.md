@@ -8,6 +8,19 @@ Measuring commands take the machine lock, record every run (dirty ones
 too) in the experiment's ledger, and give each arm a fresh `tslab-worker`
 process, which must sit beside `tslab`.
 
+## Contents
+
+- [Orientation (no GPU work)](#orientation-no-gpu-work)
+- [Measuring a model](#measuring-a-model)
+- [Checks beside the A/B](#checks-beside-the-ab)
+- [The server path: serve-bench and soak](#the-server-path-serve-bench-and-soak)
+- [Kernel benches](#kernel-benches-in-process-no-model-weights)
+- [Pricing a kernel mode](#pricing-a-kernel-mode-no-gpu-work)
+- [Results out](#results-out)
+- [Running several commands at once](#running-several-commands-at-once)
+- [Experiments against a code change](#experiments-against-a-code-change-repository-only)
+- [Traps](#traps)
+
 ## Orientation (no GPU work)
 
 | Command | Answers | Writes |
@@ -36,7 +49,7 @@ process, which must sit beside `tslab`.
 | `ab --model M --null` | This host's noise floor for a workload and metric. Run once per workload before any `ab` | `null_calibration` |
 | `ab --model M --baseline off --candidate on:KNOB=V` | Does a switch win? Paired, interleaved, with a fixed verdict rule | `run`, `verdict` |
 | `sweep --model M --sweep ID\|all` | Every candidate of a profile sweep against its baseline, each by the same pair rule as `ab`, interleaved in one session; `--sweep-file F` or `--baseline A --candidate B --candidate C` for an ad hoc one. Workload flags override the sweep's workload. Exit 4 if any candidate is inconclusive, 3 only with `--fail-on-loss`. `--gate` runs the quality gate on each WIN at the sweep's declared exactness and `--enforce-memory` holds each WIN to the memory allowance; a WIN that fails either keeps its verdict but gets `rejected` and is never `best` | `run`, one `verdict` per candidate, `sweep` |
-| `trace --model M --prompt ... --decode 64` | Metal System Trace of the measured work: GPU busy, idle gaps, per-kernel shares | `trace` |
+| `trace --model M --prompt ... --decode 64 [--window-tokens N]` | Metal System Trace of the measured work: GPU busy, idle gaps, per-kernel shares. `--window-tokens N` (the tokens decoded inside the window) divides idle ms, busy ms and command buffers per token; it is never guessed | `trace` |
 | `profile ... --arm "s96@96/streamed:TURBOSPARK_CB1_TRACE=/path/s96.tsv"` | qwen4exp decode, one TSV row per layer command buffer: `commit()`, wait, GPU busy, idle before, expert I/O. Wait minus busy is host-visible latency the GPU did not spend computing. Rows append across runs and `pass` restarts per run, so split runs where it drops. Unquotable | `run` (dirty) |
 | `profile ... --arm "taps@auto/auto:TURBOSPARK_QWEN4_TAP_FILE=/path/x.bin"` | qwen4exp: the DFlash2 drafter's context features per position (hyper-connection mean after layers 5,15,25,35,45). Forces token-by-token prefill. For offline drafter acceptance against the target's own greedy stream (`docs/QWEN4_EXP.md`, DFlash2 acceptance). Unquotable | `run` (dirty) |
 | `tree-replay --model M --drafter mtp\|dflash` | Would tree verify accept more than the chain at equal rows | `tree_replay` |
@@ -55,12 +68,13 @@ process, which must sit beside `tslab`.
 | `quant-ab --ref M --base M --cand M` | Each install replays the reference's ids: a candidate passes only with no more bytes than the base and a KL from the reference no worse (2% slack) | `run`, `quant_ab` |
 | `launch-count --model M [--arm SPEC]...` | Dispatches and command buffers per decoded token, and the pipelines each arm used. Counts only: `TURBOSPARK_LAUNCH_COUNT=1` perturbs timing | `run`, `launch_count` |
 | `spec-rounds --model M --arm NAME~mtp:4 [--synth-len 1.5,2,3]` | Speculative rounds under the runtime probe: verify time by run age, expert reads per committed token, and costs at a forced acceptance. Synthetic output is wrong by design | `run`, `spec_rounds` |
-| `image-stage --model INSTALL --fixtures DIR [--against EXP]` | Each Z-Image denoise step from the reference latent (`scripts/z_image_capture.py`): update error and output hash; exit 3 when a step's bits changed. No quality bound | `image_stage` |
+| `image-stage --model INSTALL --fixtures DIR [--against EXP]` | Each Z-Image denoise step from the reference latent (the repository's `scripts/z_image_capture.py`): update error and output hash; exit 3 when a step's bits changed. No quality bound | `image_stage` |
 | `idle-gap --model M [--arm SPEC]` | First decode step after 0.5, 1, 2, 4 and 8 s gaps, and how long its first command buffer waited for the GPU; under 20% worse than the 0.5 s gap, drop the idle-GPU idea. Cause arms (KERN-05): `--arm "wake:TURBOSPARK_LAB_IDLE_PRESTEP=wake"` runs one empty dispatch after the gap, `touch:...=touch` reads one word per page of the resident weights (trunk only), `prewarm:...=prewarm` runs the Inkling 2 open-time prewarm and waits (names every resident expert buffer and the trunk, reads one element of each; refused by name on other installs), `touch-all:...=touch-all` reads one word per page of the trunk and every resident expert buffer. Keep-warm arms (KERN-05 Step 2) set `TURBOSPARK_LAB_IDLE_KEEPWARM_MS=<50..5000>` and `TURBOSPARK_LAB_IDLE_KEEPWARM=<wake\|touch\|prewarm\|touch-all>` together, e.g. `--arm "kw250:TURBOSPARK_LAB_IDLE_KEEPWARM_MS=250,TURBOSPARK_LAB_IDLE_KEEPWARM=prewarm"`: the action runs every period strictly inside each gap, on the probe thread, so the gap still ends in up to one period of idle. The runtime's own keep-warm (KERN-05 Step 3, `--arm "kw:TURBOSPARK_INKLING2_KEEPWARM_MS=750"`, optionally `TURBOSPARK_INKLING2_KEEPWARM_WINDOW_S`) runs on its own thread instead, and each row counts it over the gap in `runner_keep_warm` (`fired`, `paused`, `failed`). All actions only read model buffers, and each row's `decode_digest` must match the `none` run. Every row also carries IOReport GPU P-state shares (`GPUPH`, machine-wide) for the gap, prestep, first step and busy steps, the sum and count of the first step's submit waits (`first_submit_total_ms`, `first_submit_buffers`), the first five busy steps (`busy_head_ms`), modeled gap energy (`gap_energy`, machine-wide), `footprint_bytes`, and swap and compressor movement over the row | `run`, `idle_gap` |
 | `anchor --model M --file F [--update]` | Greedy digests on three prompts keyed by family and toolchain; exit 3 lists changes for a person | `run`, `anchor` |
 | `release-gate --base-worker PATH --model M... [--declared F]` | A released `tslab-worker` against this one, interleaved: PASS, FAIL (undeclared loss), NEEDS-KL-GATE (output moved, undeclared), PASS-with-note, SKIP | `run`, `release_gate` |
 | `type1` | False WIN and LOSS rates of the pair rule, replayed on every stored null calibration | nothing |
-| `serve-bench`, `soak` | The server path over HTTP/SSE on loopback: latency, server usage, aggregate throughput, open-loop arrivals and goodput, and `serve-bench` the growth of the server's `turbospark_text_*` series over the run (`server_metrics`); the soak watches footprint, threads and stalls | `serve_bench`, `soak` |
+| `serve-bench`, `soak` | The server path over HTTP/SSE on loopback (see below) | `serve_bench`, `soak` |
+| `xengine-kl --model M --gguf FILE.gguf [--llama-cpp SRC] [--install-env KEY]` | This port against llama.cpp on the same GGUF bytes: runs `logit_dump` (`cargo test -p turbospark-bench`), then the repository's `scripts/kld_llamacpp.py` through `uv`, which also prints llama.cpp's own shape and backend floors. Takes the lock. Checkout and `uv` only. The install env var is picked for inkling2_loop, gemma4, deepseek2, gpt_oss and flint; another family needs `--install-env`. Procedure: `.claude/docs/cross-engine-kl.md` | no ledger record: `<lab>/<exp>/xengine/report.json` |
 
 Workload flags: `--prompt protocol:ID|messages:PATH|text:PATH|corpus:N|chat:PATH`
 (repeatable), `--decode N`, `--chunk N|off`, `--context N`. An audio install
@@ -75,8 +89,9 @@ whole run (controlled contention, never quotable); its run records keep
 the handoff share. `~cold` drops the install's resident pages
 (`msync(MS_INVALIDATE)`, no sudo) before each of the arm's runs.
 `~ballast:GIB` (1 to 12) holds touched memory beside the worker to emulate a
-smaller Mac: refused when the host already swaps, dirty on swap growth, and
-never quoted in a doc.
+smaller Mac: refused when over 2048 MiB of swap is already in use, dirty on
+swap growth over 256 MiB unless you set `--max-swap-growth-mib`, and never
+quoted in a doc.
 
 A `chat:` file may add `"edit_variants": [..]` (two or more): after the
 follow-ups the last message is edited A B C C B A from one history
@@ -86,10 +101,13 @@ follow-ups the last message is edited A B C C B A from one history
 A null run with under 3 clean pairs records no floor.
 
 `ab --noninferior 0.02 --pairs 10` also asks "not worse than 2%?" with
-one-sided bounds. `sweep --guard prefill_tok_s` refuses a WIN that taxes a
-second metric (`expert_hit_rate` among them), and prints how many false WINs its candidate count allows.
+one-sided bounds (0 to 0.03, and refused unless `--pairs` is at least 10).
+`sweep --guard METRIC[:MAX]` (MAX defaults to 0.02 and cannot exceed it) refuses a WIN that taxes a
+second metric (`expert_hit_rate` among them), and prints how many false WINs
+its candidate count allows.
 
 Metrics: `prefill_tok_s`, `decode_tok_s`, `prefill_s`, `peak_bytes`,
+`expert_hit_rate`,
 `followup_ttft_s`, `audio_run_s`, `rtf`, and the modeled-energy pair
 `prefill_j`, `decode_j` (IOReport, whole machine, comparable within one
 experiment; never a wall-power claim).
@@ -101,9 +119,43 @@ rules, off until calibrated on this host's null runs:
 `--max-compressions N`, `--max-swap-growth-mib N`, `--require-full-power`,
 `--require-normal-pressure`.
 
+## The server path: serve-bench and soak
+
+```
+serve-bench (--server http://127.0.0.1:PORT [--pid P] | --server-bin PATH --model M [--server-arg A]... [--env K=V]...)
+    [--sizes short,4k,16k] [--seeds 3] [--max-tokens 512] [--burst 4] [--warmup 1]
+    [--arrival closed|periodic|poisson [--rate R] [--requests N] [--concurrency 4] [--rounds 1]
+     [--slo-first-output-s S] [--slo-duration-s S]]
+soak (same target) [--duration 3600] [--concurrency 3] [--max-tokens 64] [--disconnect-pct 10]
+    [--long-prompt-tokens 8192] [--stall-s 180] [--max-failures 1]
+```
+
+- Target: a running loopback server (`/health` must answer 200), or
+  `--server-bin`, which spawns one with a cleared env and `--port 0` and logs
+  to `<lab>/<exp>/server-<id>.log`. Mixing the two is refused.
+- `serve-bench` reports latency, server usage, aggregate throughput, open-loop
+  goodput, and the growth of the server's `turbospark_text_*` series
+  (`server_metrics`, from `/v1/metrics`). It warns when the server's token
+  count differs from what the client received. `soak` watches footprint,
+  threads and stalls.
+- `--rate` is required for `periodic` and `poisson` and refused for `closed`.
+- No request is retried and load is never lowered. Exit 3 when a request
+  failed or the soak failed.
+- Of the host flags only `--allow-battery` is accepted; the default rules
+  apply.
+- These are server rows: their `methodology` keeps them apart from in-process
+  `ab` numbers. A server claim needs `serve-bench`, not `ab`. It writes rows,
+  not a verdict: to compare two servers, run it against each under the same
+  flags and report both rows, without calling the difference a WIN.
+
 ## Kernel benches (in process, no model weights)
 
 `kernel --model M [--bench NAME[,NAME]|all] [--rows ...] [--contexts ...] [--case LABEL] [--reps 5] [--hash] [--programs DIR] [--ane-dir DIR] [--contend N]`
+
+A bench may declare flags of its own (`--routes` on `moe_routed`; `--steps`,
+`--prefill`, `--chunk`, `--layers` on `gdn_trajectory`; `--oracle` on
+`gdn_delta`). A flag that no selected bench takes is an error
+(`--NAME: no selected bench takes it`), so select the bench that owns it.
 
 Every case records an `energy` delta over its run when the host has the
 IOReport counters. `--bench ane_matmul` (a `tslab` built with
@@ -149,10 +201,13 @@ case's `sidecar`. A trunk that already has a tower refuses the flag.
 |---|---|
 | `int4_matmul` | Per-row GEMV, scalar GEMM, Steel tiles, the 8-row MMA tile and the small-N prefill route (`small_n`, only on shapes too narrow for a whole Steel tile, such as the 48-row GDN gates) over M, at every INT4 shape the install binds |
 | `int8_matmul` | INT8 GEMV against the batched GEMM (routers, shared gates, INT8 installs) |
-| `attn_decode` | Barrier against GQA-shared decode attention over context, per variant (full, sliding, sinks) |
+| `attn_decode` | Decode attention over context, per variant (full, sliding, sinks). Arms `barrier`, `gqa`, `tq4_barrier`, `tq3.5_barrier` (TurboQuant KV at 4 and 3.5 bits). The TurboQuant arms run only on full-attention layers with a head_dim the RHT supports and are marked unsupported elsewhere |
+| `attn_decode_gemma4` | `attn_decode` at Gemma 4's head_dim 512 shapes (`gemma4_full_attn`, `gemma4_sliding_attn`, window 1024) on any install. Records keep `bench: "attn_decode"` |
 | `rows_attn` | Multi-row prefill attention against the per-row loop, with layout arms, one case per context |
-| `moe_routed` | Routed-expert pair: M decode pairs against one route-list pair (union modeled as uniform routing) |
-| `verify_ladder` | Whole-model GEMM cost per verify width; `--verify-from EXP` adds the measured non-GEMM marginal |
+| `moe_routed` | Routed-expert pair: M decode pairs (`sequential_decode_pairs`) against one route-list pair, in `(token, rank)` order (`route_list_pair`) and sorted by expert (`route_list_pair_sorted`). `--routes uniform\|zipf:S\|trace:CAPTURE.json` picks where the unions come from: `uniform` (default) models them, so the batched arm is an upper end; a trace capture comes from a run with `TURBOSPARK_ROUTER_TRACE=1` and `TURBOSPARK_ROUTER_HIST=PATH`. A non-uniform source gets its own case label (`@zipf<s>`, `@trace_<fnv>`). An M whose union passes the binding cap is skipped |
+| `verify_ladder` | Whole-model GEMM cost per verify width, under the arm the engine routes each width to. Default widths 1 to 64 plus 96; a width whose logits pass 256 MiB is refused. Widths above 16 price the sliced route, which no speculative verify in this build takes: a cost, not a width that runs. `subject.step_edges` marks where the route changes. `--verify-from EXP` adds the measured non-GEMM marginal |
+| `gdn_trajectory` | Gated-DeltaNet state run for many steps through two routes (`decode_vs_prefill`, `decode_vs_lazy_fold`), with state, conv tail and output hashed after every step, A before B and B before A. Nothing is timed. A one-ULP injected fault must be found first, or the bench errors. `subject` holds `bit_exact`, `order_stable`, `first_mismatch{layer,step,what}`. Flags `--steps 256`, `--prefill 128`, `--chunk 1` (max 64), `--layers`. Synthetic inputs, layers not chained: it tests each route's arithmetic on the state, not a forward. Refused without a GDN layer |
+| `ane_matmul` | Steel against ANE programs and row splits per shape and token count (see above; `--features ane-prefill` build, `--programs DIR`) |
 | `qkv_concurrent` | The attention q/k/v triple in a serial pass against a concurrent compute encoder (shared input, no barrier); `c(M)` is each arm's time over the serial arm's |
 | `gdn_delta` | Gated-DeltaNet delta kernels (decode, eager and lazy prefill, state fold) at the install's geometry. One build per process: put `TURBOSPARK_GDN_DK128=0` on the `tslab` process for the runtime-Dk build. `--oracle on` also checks decode and eager prefill against an FP64 reference (`turbospark_compute::oracle`) over four seeds and records `subject.oracle`: the kernel's error, the tolerance `max(floor x |ref|, 3 x incumbent)` and a run with `dt_bias` shifted by 0.01, which must exceed it or the bench errors |
 | `music3_grid` | Music 3 corpus: output hashes against goldens, per-config timing |
@@ -166,7 +221,16 @@ against the first arm, and whether the first row is `invariant` or `VARIES`
 as the batch grows. A tile that DIFFERS but is row-invariant is the
 shared-arithmetic signature (decode and verify can share it, frozen digests
 re-freeze); one that DIFFERS and VARIES is a drift bound. These are hints
-from one seed, never a gate: the parity tests are the gate. `hash-diff
+from one seed, never a gate: the parity tests are the gate.
+
+`int4_matmul` and `moe_routed` results carry `subject.tile_pin` and a "tile
+pin by ..." note: per bucket of the swept variable, the layout that is no
+slower than the baseline at every point and faster over the bucket by more
+than 2%, else the baseline. It is one chip's medians with no noise estimate,
+so it proposes a setting; it is not a verdict and says nothing about
+arithmetic (check `winner_bit_equal`).
+
+`hash-diff
 --experiment A --against B` compares two hashed runs (two builds) and exits 3
 if any output changed.
 
@@ -213,11 +277,11 @@ against `--base`, build the worker from the tree, run required tests, the
 quality gate, the paired A/B and the memory check, and print a `DECISION`.
 The quality gate compares final-position prefill logits and, when the
 workload decodes, a teacher-forced decode trace: the baseline's greedy ids
-replayed by the candidate for up to 256 steps on three document and two chat prompts, each class judged on its own,, judged
+replayed by the candidate for up to 256 steps on three document and two chat prompts, each class judged on its own
 on mean KL over every position, with any top-1 flip the reference led by 2
 logits or more failing. `gate --decode-trace` forces the trace; `gate
 --noise-arms` also compares each arm with itself. A spec may add
-`exactness: token_divergence` is for a change of verify width (the arms' speculation must differ): outputs may part only on a near tie and no more often than the model's `noise` record.
+`exactness: token_divergence` for a change of verify width (the arms' speculation must differ): outputs may part only on a near tie and no more often than the model's `noise` record.
 A prefill quality gate also compares the logits at every chunk end. A spec may add
 `also_changes` (extra arm differences, each with a reason; otherwise the arms
 may differ only in `knob_env`), `secondary_guard` and
@@ -246,7 +310,9 @@ is `crates/lab/program.md`.
   across the change.
 - `preflight.sh` lists a `tslab serve` as busy. The dashboard is read-only
   and never takes the lock; check its command line before stopping anything,
-  and never stop another session's process.
+  and never stop another session's process. It also lists a
+  `turbospark-server`: when that is the server a `serve-bench` targets, it is
+  expected. Clear the other entries, not the target.
 - Installs outside the catalog store (`~/models/...`) need the path for
   `--model`, not an alias.
 - `ane-plan` says where ops run, not how fast. "Supported on the ANE" is not
