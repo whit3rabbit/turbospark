@@ -14,6 +14,14 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- Music: ACE-Step 1.5 Turbo text2music (`ace-step15-turbo`, 48 kHz stereo,
+  Metal): a native port of the Oobleck VAE, Qwen3-Embedding text encoder,
+  condition encoder, 24-layer flow-matching DiT, FSQ cover tokenizer and
+  upstream's DCW sampler correction, gated against the upstream PyTorch
+  reference on the real checkpoint. Served by audio music sessions, the
+  catalog (`turbospark-model pull-audio ace-step15-turbo`) and
+  `turbospark-music generate`; the silence latent is read from the pinned
+  `silence_latent.pt` without unpickling.
 - Server: llama.cpp-style `timings` and `usage.prompt_tokens_details.cached_tokens`
   on chat completion and completion responses, and `turbospark_text_*` series on
   `GET /v1/metrics`, which every server now serves behind the usual auth.

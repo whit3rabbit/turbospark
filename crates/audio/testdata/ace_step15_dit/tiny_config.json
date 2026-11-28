@@ -1,0 +1,37 @@
+{
+  "hidden_size": 32,
+  "intermediate_size": 48,
+  "num_hidden_layers": 4,
+  "num_attention_heads": 4,
+  "num_key_value_heads": 2,
+  "head_dim": 8,
+  "num_lyric_encoder_hidden_layers": 2,
+  "num_timbre_encoder_hidden_layers": 2,
+  "num_attention_pooler_hidden_layers": 2,
+  "text_hidden_dim": 16,
+  "timbre_hidden_dim": 8,
+  "audio_acoustic_hidden_dim": 8,
+  "in_channels": 24,
+  "sliding_window": 3,
+  "fsq_dim": 32,
+  "rope_theta": 1000000,
+  "rms_norm_eps": 1e-06,
+  "patch_size": 2,
+  "pool_window_size": 5,
+  "layer_types": [
+    "sliding_attention",
+    "full_attention",
+    "sliding_attention",
+    "full_attention"
+  ],
+  "use_sliding_window": true,
+  "fsq_input_levels": [
+    8,
+    8,
+    8,
+    5,
+    5,
+    5
+  ],
+  "fsq_input_num_quantizers": 1
+}

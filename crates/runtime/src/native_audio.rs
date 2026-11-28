@@ -439,6 +439,8 @@ pub const FISH_DRAMA3_FAMILY: &str = "fish_drama3";
 pub const OMNIVOICE_FAMILY: &str = "omnivoice";
 /// Persisted family string of the MiniMax Music 3 engine.
 pub const MUSIC3_FAMILY: &str = "minimax_music3";
+/// Persisted family string of the ACE-Step 1.5 turbo music engine.
+pub const ACE_STEP15_FAMILY: &str = crate::ace_step15::FAMILY;
 /// Persisted family string of the MossFormer2 SE 48 kHz enhancement engine.
 pub const MOSSFORMER2_SE_FAMILY: &str = "mossformer2_se";
 /// Persisted family string of the inworld Voice Isolator engine.
@@ -528,9 +530,13 @@ pub fn validate_request(
             if !samples.is_empty() {
                 return Err("music generation does not accept PCM".into());
             }
-            music_request(request)
-                .validate()
-                .map_err(|e| e.to_string())?;
+            if family == ACE_STEP15_FAMILY {
+                ace_step15_request(request)?;
+            } else {
+                music_request(request)
+                    .validate()
+                    .map_err(|e| e.to_string())?;
+            }
         }
     }
     Ok(())
@@ -845,6 +851,51 @@ fn music_request(r: &AudioRequest) -> audio::music::minimax_music3::TextGenerate
         seed: r.seed,
     }
 }
+
+/// An ACE-Step 1.5 turbo music request. Turbo runs a fixed 8-step
+/// schedule and sizes itself from the duration, so a different step
+/// count or a context size is refused rather than ignored (`max_frames`
+/// is refused by the shared sampler-field guard).
+fn ace_step15_request(r: &AudioRequest) -> Result<crate::ace_step15::Request<'_>, String> {
+    let duration = r
+        .duration_seconds
+        .ok_or("ACE-Step needs duration_seconds")?;
+    if !(duration.is_finite()
+        && duration > 0.0
+        && duration <= audio::music::ace_step15::pipeline::MAX_DURATION_SECONDS)
+    {
+        return Err(format!(
+            "ACE-Step duration_seconds must be in (0, {}]",
+            audio::music::ace_step15::pipeline::MAX_DURATION_SECONDS
+        ));
+    }
+    if r.steps.is_some_and(|s| s != crate::ace_step15::STEPS) {
+        return Err(format!(
+            "ACE-Step turbo runs a fixed {}-step schedule; leave steps unset or {}",
+            crate::ace_step15::STEPS,
+            crate::ace_step15::STEPS
+        ));
+    }
+    if r.context_size.is_some() {
+        return Err("context_size is a MiniMax Music 3 setting; ACE-Step does not take it".into());
+    }
+    let language = r.language.as_deref().unwrap_or("en");
+    if language.is_empty()
+        || language.len() > 16
+        || !language
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    {
+        return Err("ACE-Step language must be a short code such as en, zh or ja".into());
+    }
+    Ok(crate::ace_step15::Request {
+        caption: &r.caption,
+        lyrics: &r.lyrics,
+        language,
+        duration_seconds: duration,
+        seed: r.seed.unwrap_or(0),
+    })
+}
 enum Engine {
     Whisper(Box<crate::WhisperRunner>),
     Qwen(Box<crate::Qwen3AsrRunner>),
@@ -857,6 +908,7 @@ enum Engine {
     FishDrama3(std::cell::RefCell<Box<crate::fish_drama3::FishDrama3Runner>>),
     OmniVoice(std::cell::RefCell<Box<crate::omnivoice::OmniVoiceRunner>>),
     Music(Box<crate::Music3Runner>),
+    AceStep15(std::cell::RefCell<Box<crate::ace_step15::AceStep15Runner>>),
     MossFormer2Se(Box<audio::sts::mossformer2_se::MossFormer2Se>),
     VoiceIsolator(Box<audio::sts::VoiceIsolator>),
     MelRoFormer(Box<audio::sts::mel_roformer::MelRoFormer>),
@@ -882,6 +934,7 @@ impl Engine {
             Self::FishDrama3(_) => FISH_DRAMA3_FAMILY,
             Self::OmniVoice(_) => OMNIVOICE_FAMILY,
             Self::Music(_) => MUSIC3_FAMILY,
+            Self::AceStep15(_) => ACE_STEP15_FAMILY,
             Self::MossFormer2Se(_) => MOSSFORMER2_SE_FAMILY,
             Self::VoiceIsolator(_) => VOICE_ISOLATOR_FAMILY,
             Self::MelRoFormer(_) => MEL_ROFORMER_FAMILY,
@@ -981,6 +1034,23 @@ impl Engine {
             AudioTask::TextToSpeech => crate::KokoroRunner::open(path)
                 .map(|m| Self::Kokoro(Box::new(m)))
                 .map_err(|e| e.to_string()),
+            AudioTask::Music if crate::ace_step15::detect(path) => {
+                // Metal by default; the host path is correct but slow, so
+                // it opens only when the caller allows a portable engine.
+                let device = if gpu::Music3Device::new().is_ok() {
+                    crate::ace_step15::Device::Metal
+                } else if allow_portable {
+                    crate::ace_step15::Device::Cpu
+                } else {
+                    return Err(
+                        "ACE-Step needs a Metal device (or allow_portable for the slow CPU path)"
+                            .into(),
+                    );
+                };
+                crate::ace_step15::AceStep15Runner::open(path, device)
+                    .map(|m| Self::AceStep15(std::cell::RefCell::new(Box::new(m))))
+                    .map_err(|e| e.to_string())
+            }
             AudioTask::Music => crate::Music3Runner::open(path)
                 .map(|m| Self::Music(Box::new(m)))
                 .map_err(|e| e.to_string()),
@@ -1355,6 +1425,45 @@ impl Engine {
                     interleaved: true,
                 });
                 result.seed = Some(r.seed.unwrap_or(0));
+            }
+            Self::AceStep15(model) => {
+                use audio::music::ace_step15::Stage;
+                let request = ace_step15_request(r)?;
+                let rendered = model
+                    .borrow_mut()
+                    .generate(&request, |stage| {
+                        let (stage, completed, total) = match stage {
+                            Stage::Text => ("text", 0, None),
+                            Stage::Condition => ("condition", 0, None),
+                            Stage::Step { index, total } => ("dit_step", index, Some(total)),
+                            Stage::Decode => ("decode", 0, None),
+                        };
+                        events
+                            .send(AudioEvent::Progress(AudioProgress {
+                                stage: stage.into(),
+                                completed,
+                                total,
+                            }))
+                            .is_ok()
+                            && !cancel.is_cancelled()
+                    })
+                    .map_err(|e| e.to_string())?;
+                let Some(rendered) = rendered else {
+                    cancel.checkpoint()?;
+                    return Err("ACE-Step generation stopped: the event receiver closed".into());
+                };
+                emit_pcm(
+                    &rendered.interleaved,
+                    cancel,
+                    events,
+                    &mut result.sample_count,
+                )?;
+                result.pcm_format = Some(AudioPcmFormat {
+                    sample_rate: rendered.sample_rate,
+                    channels: 2,
+                    interleaved: true,
+                });
+                result.seed = Some(request.seed);
             }
             Self::MossFormer2Se(_) | Self::VoiceIsolator(_) => {
                 let input = enhancement_pcm(r, samples)?;
@@ -1782,6 +1891,10 @@ pub fn tts_model_type(path: &Path) -> Option<String> {
     value.get("model_type")?.as_str().map(str::to_owned)
 }
 fn estimate_open_bytes(path: &Path, task: AudioTask) -> Result<u64, String> {
+    if task == AudioTask::Music && crate::ace_step15::detect(path) {
+        // Weights live in subdirectories the flat scan below never sees.
+        return crate::ace_step15::open_bytes(path);
+    }
     if task == AudioTask::TextToSpeech && tts_model_type(path).as_deref() == Some(MEGATTS3_FAMILY) {
         // Metal is tried first, and its device copies are the larger estimate.
         return megatts3_open_bytes(path, true);

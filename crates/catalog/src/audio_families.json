@@ -490,6 +490,19 @@
     "evidence": "crates/audio/src/music/minimax_music3/README.md; historical evidence only, not rerun by capability discovery"
   },
   {
+    "family": "music/ace_step15",
+    "task": "music",
+    "operations": [
+      "text2music"
+    ],
+    "backend": "metal",
+    "can_run": true,
+    "component": false,
+    "unavailable_reason": null,
+    "source": "crates/audio/src/music/ace_step15/mod.rs",
+    "evidence": "crates/audio/src/music/ace_step15/README.md; parity and session gates in that README, not rerun by capability discovery"
+  },
+  {
     "family": "sts/deepfilternet",
     "task": "enhancement",
     "operations": [

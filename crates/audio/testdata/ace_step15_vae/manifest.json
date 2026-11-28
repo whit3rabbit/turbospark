@@ -1,0 +1,23 @@
+{
+  "generator": "tools/gen_ace_step15_vae_fixtures.py",
+  "reference": "diffusers AutoencoderOobleck",
+  "diffusers_version": "0.37.1",
+  "torch_version": "2.15.0",
+  "ace_step_commit": "ca1e85fe9430179831e6bc6be790c332190a3866",
+  "files": {
+    "tiny_config.json": "5f6a5b23ee4a9204a4da04743e6c6af9cdf305851424af6a1714e8c7126797fc",
+    "tiny_weights.safetensors": "1d7b875c6c0d43c60a0172ecfac2bd1990303520db25221d97ada721eb7913c3",
+    "a_audio.npy": "81593d8680b94268d659c358e5c036c4bd7ecbcbeeb951ab0505e4ab9e9d0173",
+    "a_mean.npy": "b30fd5927c8af946d39abcf692469feb35e48f8fd232f8010d4fc9d264629f53",
+    "a_std.npy": "eb611fc68888849673900a1d218be03046aa877818cb59d1beb06cc6d910043d",
+    "a_noise.npy": "80fcd75a587366c7e4feba769773fdf670638ce06a06646c88dbdf62e858daca",
+    "a_sample.npy": "b08ffb01443b4121a2d92234e7a21866c7accb334fd141b04c1230b42b87a74c",
+    "a_decoded.npy": "414028014c24d3745e9b811a36e39412fc308b9b87ba37928d1cd002e5ee03cc",
+    "b_audio.npy": "c933143e634515d0a624ea390b31d59efaa3cd13bc58ba88abeb16e72461d5de",
+    "b_mean.npy": "705c8116c46cceab933ff3f557a3b2eac656a0a98b27740402b11dfd75aae89d",
+    "b_std.npy": "2da6248cc573bd68e5ad5dcb3477c7102195336d2ff046a1afaa8d4a0511b18e",
+    "b_noise.npy": "1f1c1a58cb4d02ba412103d11a08d770c99797bab0a513d1f3370f580abc7537",
+    "b_sample.npy": "17d75b112717b8969d9bb3010553febfb0b0f665a4e11fee8d0d8dd25ae14960",
+    "b_decoded.npy": "aff0620bf3d69342dc644f8ae49d15279e0fa0cdfe319bab50d84cb8a364e168"
+  }
+}

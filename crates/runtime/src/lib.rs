@@ -204,6 +204,8 @@ pub use turn_stream::{TurnEvent, TurnSplitter};
 pub use foundation::TokenId;
 
 #[cfg(target_os = "macos")]
+pub mod ace_step15;
+#[cfg(target_os = "macos")]
 pub mod fish_drama3;
 #[cfg(target_os = "macos")]
 pub mod fish_drama3_codec;
