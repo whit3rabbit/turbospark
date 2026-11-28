@@ -31,7 +31,9 @@ use compute::inkling2::{
     NVFP4_BLOCK_BYTES, NVFP4_BLOCK_ELEMS,
 };
 use model_io::inkling2_config::{Inkling2Config, INKLING2_CONFIG_FILE};
-use model_io::{ArchConfig, SafetensorsFile, INKLING2_ROUTED_SCHEME};
+use model_io::{ArchConfig, SafetensorsFile, INKLING2_GGUF_ROUTED_SCHEME, INKLING2_ROUTED_SCHEME};
+
+use crate::inkling2_mlx::oq::{affine4_row_to_q4_1, Q4_1_BLOCK_BYTES};
 use serde_json::Value;
 
 use crate::gturbo_writer::{ExpertBlob, LayerBlobs, StreamingGturboWriter, SubTensor};
@@ -219,6 +221,9 @@ pub fn parse_inkling2_config(
 enum Scheme {
     Nvfp4,
     Mxfp8,
+    /// Affine 4-bit experts (oQ), repacked as GGUF Q4_1 and run by the
+    /// Inkling GGUF pair.
+    Q41,
 }
 
 impl Scheme {
@@ -226,12 +231,14 @@ impl Scheme {
         match self {
             Scheme::Nvfp4 => cols / NVFP4_BLOCK_ELEMS * NVFP4_BLOCK_BYTES,
             Scheme::Mxfp8 => cols / MXFP8_BLOCK_ELEMS * MXFP8_BLOCK_BYTES,
+            Scheme::Q41 => cols / 32 * Q4_1_BLOCK_BYTES,
         }
     }
     fn dtype(self) -> &'static str {
         match self {
             Scheme::Nvfp4 => INKLING2_NVFP4_DTYPE,
             Scheme::Mxfp8 => INKLING2_MXFP8_DTYPE,
+            Scheme::Q41 => "q4_1",
         }
     }
     /// Source bytes of one row of `cols` elements, and of its scales.
@@ -239,6 +246,8 @@ impl Scheme {
         match self {
             Scheme::Nvfp4 => (cols / 2, cols / 16),
             Scheme::Mxfp8 => (cols, cols / 32),
+            // Packed values, then BF16 scales (and as many biases) per 64.
+            Scheme::Q41 => (cols / 2, cols / 64 * 2),
         }
     }
 }
@@ -330,6 +339,9 @@ fn expert_blob_bytes(scheme: Scheme, hidden: usize, ffn: usize) -> usize {
 
 fn layer_scheme(src: &dyn Inkling2Source, layer: usize) -> Result<Scheme, Inkling2RepackError> {
     let name = format!("model.llm.layers.{layer}.mlp.experts.w13_weight");
+    if src.affine(&name).is_some() {
+        return Ok(Scheme::Q41);
+    }
     let (dt, _, _) = tensor(src, &name)?;
     match dt.as_str() {
         "U8" => Ok(Scheme::Nvfp4),
@@ -349,6 +361,9 @@ fn build_layer(
     ffn: usize,
 ) -> Result<LayerBlobs, Inkling2RepackError> {
     let scheme = layer_scheme(src, layer)?;
+    if scheme == Scheme::Q41 {
+        return build_q4_1_layer(src, layer, experts, hidden, ffn);
+    }
     let p = format!("model.llm.layers.{layer}.mlp.experts");
     let (w13_rb, s13_rb) = scheme.src_bytes(hidden);
     let (w2_rb, s2_rb) = scheme.src_bytes(ffn);
@@ -367,6 +382,7 @@ fn build_layer(
     let (wdt, sdt) = match scheme {
         Scheme::Nvfp4 => ("U8", "F8_E4M3"),
         Scheme::Mxfp8 => ("F8_E4M3", "U8"),
+        Scheme::Q41 => unreachable!("returned above"),
     };
     let w13 = check(&format!("{p}.w13_weight"), wdt, [experts, 2 * ffn, w13_rb])?;
     let s13 = check(
@@ -415,12 +431,14 @@ fn build_layer(
             }
             None
         }
+        Scheme::Q41 => unreachable!("returned above"),
     };
 
     let transcode = |w: &[u8], s: &[u8]| -> Result<Vec<u8>, Inkling2RepackError> {
         match scheme {
             Scheme::Nvfp4 => nvfp4_row_to_blocks(w, s),
             Scheme::Mxfp8 => mxfp8_row_to_blocks(w, s),
+            Scheme::Q41 => unreachable!("returned above"),
         }
         .map_err(|m| Inkling2RepackError(format!("layer {layer}: {m}")))
     };
@@ -504,6 +522,80 @@ fn build_layer(
     Ok(LayerBlobs {
         layer,
         experts: blobs.into_iter().collect::<Result<_, _>>()?,
+    })
+}
+
+/// One layer of affine 4-bit experts as Q4_1 blobs. The outer scales are 1:
+/// each block carries its own scale and bias.
+fn build_q4_1_layer(
+    src: &dyn Inkling2Source,
+    layer: usize,
+    experts: usize,
+    hidden: usize,
+    ffn: usize,
+) -> Result<LayerBlobs, Inkling2RepackError> {
+    let p = format!("model.llm.layers.{layer}.mlp.experts");
+    let affine = |n: &str, rows: usize, cols: usize| {
+        let name = format!("{p}.{n}");
+        let a = src
+            .affine(&name)
+            .ok_or_else(|| Inkling2RepackError(format!("{name}: not affine")))?;
+        if a.bits != 4 || a.rows != experts * rows || a.cols != cols {
+            return err(format!(
+                "{name}: expected affine 4-bit [{experts} x {rows}, {cols}], got {}-bit [{}, {}]",
+                a.bits, a.rows, a.cols
+            ));
+        }
+        Ok(a)
+    };
+    let w13 = affine("w13_weight", 2 * ffn, hidden)?;
+    let w2 = affine("w2_weight", hidden, ffn)?;
+    let row = |a: &AffineTensor<'_>, r: usize| {
+        let (pb, sb) = (a.cols / 2, a.cols / 64 * 2);
+        affine4_row_to_q4_1(
+            &a.packed[r * pb..(r + 1) * pb],
+            &a.scales[r * sb..(r + 1) * sb],
+            &a.biases[r * sb..(r + 1) * sb],
+            a.cols,
+        )
+        .map_err(|e| Inkling2RepackError(format!("layer {layer} row {r}: {}", e.0)))
+    };
+    let mut record = Vec::with_capacity(INKLING2_OUTER_RECORD_BYTES);
+    for v in [1.0f32, 1.0, 1.0, 0.0] {
+        record.extend_from_slice(&v.to_le_bytes());
+    }
+    let mut blobs = Vec::with_capacity(experts);
+    for e in 0..experts {
+        let (mut gate, mut up, mut down) = (Vec::new(), Vec::new(), Vec::new());
+        // w13 interleaves rows: even rows are gate, odd rows are up.
+        for k in 0..ffn {
+            gate.extend(row(&w13, e * 2 * ffn + 2 * k)?);
+            up.extend(row(&w13, e * 2 * ffn + 2 * k + 1)?);
+        }
+        for k in 0..hidden {
+            down.extend(row(&w2, e * hidden + k)?);
+        }
+        let sub = |role: &str, bytes: Vec<u8>, dtype: &str, shape: Vec<u64>| SubTensor {
+            role: role.into(),
+            bytes,
+            dtype: dtype.into(),
+            shape,
+        };
+        let dt = Scheme::Q41.dtype();
+        let (h, f) = (hidden as u64, ffn as u64);
+        blobs.push(ExpertBlob {
+            expert: e,
+            sub_tensors: vec![
+                sub("outer", record.clone(), "F32", vec![4]),
+                sub("gate", gate, dt, vec![f, h]),
+                sub("up", up, dt, vec![f, h]),
+                sub("down", down, dt, vec![h, f]),
+            ],
+        });
+    }
+    Ok(LayerBlobs {
+        layer,
+        experts: blobs,
     })
 }
 
@@ -668,6 +760,8 @@ pub struct Inkling2InstallReport {
     pub layers: usize,
     pub nvfp4_layers: usize,
     pub mxfp8_layers: usize,
+    /// Affine 4-bit expert layers, repacked as GGUF Q4_1.
+    pub q4_1_layers: usize,
     pub resident_tensors: usize,
     pub expert_stride: u64,
 }
@@ -724,6 +818,11 @@ pub fn write_inkling2_install_from(
     let resident = resident_entries(src, arch.short_conv_kernel_size as usize)?;
     let io = |e: crate::gturbo_writer::WriterError| Inkling2RepackError(e.to_string());
     let mut writer = StreamingGturboWriter::new(out, stride, experts).map_err(io)?;
+    let mut quant = quant;
+    // A ggml block type among the experts takes the GGUF routed scheme.
+    if schemes.contains(&Scheme::Q41) {
+        quant["routedExpert"]["scheme"] = INKLING2_GGUF_ROUTED_SCHEME.into();
+    }
     writer.set_quant(quant);
     for (l, scheme) in schemes.iter().enumerate() {
         let blobs = build_layer(src, l, experts, hidden, ffn)?;
@@ -748,6 +847,7 @@ pub fn write_inkling2_install_from(
         layers,
         nvfp4_layers: schemes.iter().filter(|&&s| s == Scheme::Nvfp4).count(),
         mxfp8_layers: schemes.iter().filter(|&&s| s == Scheme::Mxfp8).count(),
+        q4_1_layers: schemes.iter().filter(|&&s| s == Scheme::Q41).count(),
         resident_tensors: n_resident,
         expert_stride: stride,
     })

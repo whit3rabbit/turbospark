@@ -420,8 +420,9 @@ pub fn install_inkling2_local(
                 )
                 .map_err(|e| e.0)?;
                 progress(&format!(
-                    "wrote {} resident tensors ({bits}-bit affine dense weights)",
-                    r.resident_tensors
+                    "wrote {} resident tensors ({bits}-bit affine dense weights), {} Q4_1 \
+                     expert layers",
+                    r.resident_tensors, r.q4_1_layers
                 ));
             }
         }

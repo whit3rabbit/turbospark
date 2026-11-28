@@ -38,6 +38,9 @@ use crate::inkling2_checkpoint::{AffineTensor, Inkling2RepackError, Inkling2Sour
 /// `global_scale`.
 pub const MLX_NVFP4_GLOBAL_FACTOR: f32 = 2688.0;
 
+#[path = "inkling2_mlx_oq.rs"]
+pub(crate) mod oq;
+
 fn err<T>(msg: impl Into<String>) -> Result<T, Inkling2RepackError> {
     Err(Inkling2RepackError(msg.into()))
 }
@@ -137,8 +140,13 @@ enum Mapped {
         shape: Option<Vec<usize>>,
         narrow: bool,
     },
-    /// An affine dense matrix: the MLX base name (without `.weight`).
-    Affine { base: String, bits: u8 },
+    /// An affine matrix: the MLX base name (without `.weight`), and the
+    /// `(first, count)` rows of it when the HF matrix is one slice.
+    Affine {
+        base: String,
+        bits: u8,
+        rows: Option<(usize, usize)>,
+    },
     /// Bytes the source builds itself.
     Synth {
         dtype: &'static str,
@@ -200,7 +208,11 @@ impl Inkling2MlxSource {
             map: BTreeMap::new(),
             affine_bits: Default::default(),
         };
-        src.build_map(layers, core, hidden)?;
+        if oq::is_oq(&src) {
+            src.build_oq_map(layers, core, hidden)?;
+        } else {
+            src.build_map(layers, core, hidden)?;
+        }
         Ok(src)
     }
 
@@ -240,7 +252,11 @@ impl Inkling2MlxSource {
                 let groups = s.shape[1];
                 let bits = (words * 32 / (groups * 64)) as u8;
                 self.affine_bits.insert(bits);
-                Mapped::Affine { base, bits }
+                Mapped::Affine {
+                    base,
+                    bits,
+                    rows: None,
+                }
             } else if mlx.ends_with("conv1d.weight") {
                 // [C, taps, 1] -> [C, 1, taps]: a swap with a size-1 axis.
                 if d.shape.len() != 3 || d.shape[2] != 1 {
@@ -441,18 +457,27 @@ impl Inkling2Source for Inkling2MlxSource {
     }
 
     fn affine(&self, name: &str) -> Option<AffineTensor<'_>> {
-        let Some(Mapped::Affine { base, bits }) = self.map.get(name) else {
+        let Some(Mapped::Affine { base, bits, rows }) = self.map.get(name) else {
             return None;
         };
         let w = self.desc(&format!("{base}.weight"))?;
-        let (rows, words) = (w.shape[0], w.shape[1]);
+        // A stacked expert tensor is `[E, R, words]`: its rows are flattened.
+        let words = *w.shape.last()?;
+        let total: usize = w.shape[..w.shape.len() - 1].iter().product();
+        let (first, n) = rows.unwrap_or((0, total));
+        let cols = words * 32 / *bits as usize;
+        let slice = |suffix: &str, row_bytes: usize| {
+            self.bytes(&format!("{base}.{suffix}"))
+                .ok()?
+                .get(first * row_bytes..(first + n) * row_bytes)
+        };
         Some(AffineTensor {
             bits: *bits,
-            rows,
-            cols: words * 32 / *bits as usize,
-            packed: self.bytes(&format!("{base}.weight")).ok()?,
-            scales: self.bytes(&format!("{base}.scales")).ok()?,
-            biases: self.bytes(&format!("{base}.biases")).ok()?,
+            rows: n,
+            cols,
+            packed: slice("weight", words * 4)?,
+            scales: slice("scales", cols / 64 * 2)?,
+            biases: slice("biases", cols / 64 * 2)?,
         })
     }
 }
