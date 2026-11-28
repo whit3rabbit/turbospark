@@ -22,7 +22,7 @@ Metal vision encoders that turn preprocessed image patches into FP16 embedding r
 - `Gemma4VisionTower`, `Gemma4Dims` [gemma4.rs:Gemma4VisionTower]: Gemma 4 tower with host pooling
 - `PixtralVisionTower`, `split_rows_by_span` [pixtral.rs:PixtralVisionTower]: Pixtral tower with 2-D rope
 - `Lfm3VlVisionTower`, `Lfm3VlDims` [lfm3_vl.rs:Lfm3VlVisionTower]: LFM3-VL conv/attention hybrid tower
-- `MiniCpmVisionTower`, `tower_order`, `position_buckets` [minicpm.rs:MiniCpmVisionTower]: MiniCPM-V 4.7 tower with vit_merger
+- `MiniCpmVisionTower`, `tower_order`, `position_buckets` [minicpm.rs:MiniCpmVisionTower]: MiniCPM-V 4.6/4.7 tower with vit_merger
 - `MuseVisionTower`, `position_rows`, `pixel_shuffle` [muse.rs:MuseVisionTower]: Muse-Glimmer windowed tower
 - `DeepseekOcrVisionTower`, `window_gather_index`, `window_scatter_index` [deepseek_ocr.rs:DeepseekOcrVisionTower]: DeepSeek-OCR SAM plus CLIP-L
 - `Uocr2Tower`, `read_bounded`, `parse_tower_index` [unlimited_ocr2.rs:Uocr2Tower]: Unlimited-OCR-2 tower (pub module), loads uocr2_tower.bin/json

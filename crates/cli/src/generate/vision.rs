@@ -550,3 +550,216 @@ pub(crate) fn attach_unlimited_ocr2(
         .map_err(|e| format!("--image: {e}"))?;
     Ok(expanded)
 }
+
+/// The Idefics3 / SmolVLM `--image` path
+/// (`docs/IDEFICS3_VISION_PHASE0.md`): resolve the two special tokens, decode
+/// the files and let the runner tile, expand, encode and inject.
+pub(crate) fn attach_idefics3(
+    session: &mut Session,
+    rendered: &[i32],
+    paths: &[String],
+) -> Result<Vec<i32>, String> {
+    let image_id = session
+        .runner
+        .idefics3_image_ids()
+        .ok_or("this install's vision tower is not an Idefics3 one")?;
+    if session.tokenizer.id_to_token(image_id).as_deref() != Some("<image>") {
+        return Err(format!(
+            "token id {image_id} is {:?} in this tokenizer but the manifest says it is <image>",
+            session.tokenizer.id_to_token(image_id)
+        ));
+    }
+    let fake_id = session
+        .tokenizer
+        .token_to_id("<fake_token_around_image>")
+        .ok_or("this tokenizer has no <fake_token_around_image> token")?;
+    let mut images = Vec::with_capacity(paths.len());
+    for path in paths {
+        let decoded = decode_image_file(std::path::Path::new(path))
+            .map_err(|e| format!("--image {path}: {e}"))?;
+        images.push((format!("--image {path}"), decoded));
+    }
+    let tokenizer = &session.tokenizer;
+    session
+        .runner
+        .attach_idefics3(rendered, fake_id, &images, |text| {
+            Ok::<_, String>(tokenizer.encode(text, false))
+        })
+        .map_err(|e| format!("--image: {e}"))
+}
+
+/// Flatten an InternViT conversation's image parts into the `<img>\n` marker
+/// string the rendered prompt must carry.
+///
+/// The published `internvl_chat` checkpoints ship a TEXT-ONLY template (the
+/// plain Qwen2 one, whose `'<|im_start|>' + message.content` cannot render a
+/// content-part list), and the reference formats its question through the
+/// conversation module rather than the template. Scoped to the InternViT
+/// tower, which means BOTH wrappers: an `internvl` install is flattened too,
+/// although its template may handle parts itself (no install of that flavor
+/// has run). Every other tower stays on its own path, and a text-only
+/// conversation is returned unchanged.
+pub(crate) fn flatten_internvl_parts(
+    session: &Session,
+    messages: &[tokenizer::Message],
+) -> Vec<tokenizer::Message> {
+    if session.runner.internvl_image_ids().is_none()
+        || messages.iter().all(|m| m.image_count() == 0)
+    {
+        return messages.to_vec();
+    }
+    messages
+        .iter()
+        .map(|m| {
+            if m.image_count() == 0 {
+                return m.clone();
+            }
+            let mut text = String::new();
+            for part in &m.content_parts {
+                match part {
+                    tokenizer::ContentPart::Image => text.push_str("<img>\n"),
+                    tokenizer::ContentPart::Text(t) => text.push_str(t),
+                }
+            }
+            let mut flat = m.clone();
+            flat.content = Some(text);
+            flat.content_parts = Vec::new();
+            flat
+        })
+        .collect()
+}
+
+/// The InternViT tower's whole `--image` path (the InternVL wrappers,
+/// `docs/INTERNVL_VISION_PHASE0.md`): read the processor settings beside the
+/// tower, decode and preprocess each file into its dynamic tiles (plus
+/// thumbnail), expand each rendered image marker into
+/// `[<img>] [<IMG_CONTEXT>] * tokens [</img>]`, run the tower, and hand the
+/// runner the rows. Returns the expanded ids to prefill.
+///
+/// The span ids are TOKENIZER-resolved, not manifest fields: `<IMG_CONTEXT>`
+/// is checked against the manifest's `image_token_id` (a mismatch means the
+/// install and the tokenizer disagree about the vocabulary, the same refusal
+/// `attach_minicpm` makes), and `<img>` / `</img>` are looked up by text.
+/// Which marker the template rendered decides the expansion's trigger:
+/// the `internvl` wrapper's template emits bare `<IMG_CONTEXT>`, the
+/// `internvl_chat` one emits `<img>`, and a prompt carrying neither is
+/// refused rather than expanded blindly.
+pub(crate) fn attach_internvl(
+    session: &mut Session,
+    rendered: &[i32],
+    paths: &[String],
+) -> Result<Vec<i32>, String> {
+    const IMG_CONTEXT: &str = "<IMG_CONTEXT>";
+    const IMG_START: &str = "<img>";
+    const IMG_END: &str = "</img>";
+    let context_id = session
+        .runner
+        .internvl_image_ids()
+        .ok_or("this install's vision tower is not an InternViT one")?;
+    if session.tokenizer.id_to_token(context_id).as_deref() != Some(IMG_CONTEXT) {
+        return Err(format!(
+            "token id {context_id} is {:?} in this tokenizer but the InternViT prompt layout \
+             needs {IMG_CONTEXT:?}",
+            session.tokenizer.id_to_token(context_id)
+        ));
+    }
+    let img_start = session
+        .tokenizer
+        .token_to_id(IMG_START)
+        .ok_or("this tokenizer has no <img> token, which the InternViT span needs")?;
+    let img_end = session
+        .tokenizer
+        .token_to_id(IMG_END)
+        .ok_or("this tokenizer has no </img> token, which the InternViT span needs")?;
+
+    let path = session.runner.vision_dir().join("preprocessor_config.json");
+    let params = match std::fs::read_to_string(&path) {
+        Ok(json) => turbospark_vision_io::InternVlParams::from_preprocessor_config_json(&json)
+            .map_err(|e| format!("{}: {e}", path.display()))?,
+        Err(_) => {
+            eprintln!(
+                "internvl: {} is unreadable; using the reference processor's defaults",
+                path.display()
+            );
+            turbospark_vision_io::InternVlParams::default()
+        }
+    };
+    let vision = session.runner.vision_config();
+    // The tile edge and the tower's position table must describe the same
+    // geometry: (tile / patch)^2 = position rows - 1, merge^2 patches per
+    // token. A disagreement is a config/preprocessor mismatch, refused here
+    // rather than at a shape check inside the tower.
+    let side = ((vision.num_position_embeddings - 1) as f64).sqrt().round() as i64;
+    let want_tile = side * vision.patch_size;
+    if vision.patch_size != 14 || params.tile as i64 != want_tile {
+        return Err(format!(
+            "{}: a {}-pixel tile against patch {} and a {}-row position table wants tile {}; \
+             the two describe different checkpoints",
+            path.display(),
+            params.tile,
+            vision.patch_size,
+            vision.num_position_embeddings,
+            want_tile
+        ));
+    }
+
+    let mut prepared = Vec::with_capacity(paths.len());
+    for image_path in paths {
+        let decoded = decode_image_file(std::path::Path::new(image_path))
+            .map_err(|e| format!("--image {image_path}: {e}"))?;
+        let tiles = turbospark_vision_io::internvl_preprocess(
+            &decoded,
+            vision.patch_size as usize,
+            &params,
+        )
+        .map_err(|e| format!("--image {image_path}: {e}"))?;
+        prepared.push((image_path, tiles));
+    }
+    // Tokens per image: every tile contributes (side / merge)^2 projector
+    // rows, and the whole run sits in ONE span.
+    let side_usize = side as usize;
+    let merge = vision.spatial_merge_size as usize;
+    let per_tile = (side_usize / merge) * (side_usize / merge);
+    let counts: Vec<usize> = prepared.iter().map(|(_, t)| t.tiles * per_tile).collect();
+    // The marker is whichever id the template rendered: the context id
+    // itself, or the <img> start (the internvl_chat template's form).
+    let marker = if rendered.contains(&context_id) {
+        context_id
+    } else if rendered.contains(&img_start) {
+        img_start
+    } else {
+        return Err(format!(
+            "cannot place {} image(s) in this prompt: no image marker the InternViT span \
+             expands ({IMG_CONTEXT:?} id {context_id} or {IMG_START:?} id {img_start}); check \
+             the messages actually carry image parts",
+            paths.len()
+        ));
+    };
+    let (expanded, spans) = turbospark_vision_io::internvl_expand_image_placeholders(
+        rendered, marker, img_start, img_end, context_id, &counts,
+    )
+    .map_err(|e| format!("cannot place {} image(s) in this prompt: {e}", paths.len()))?;
+    let mut rows = Vec::with_capacity(prepared.len());
+    for (image_path, tiles) in &prepared {
+        let encoded = session
+            .runner
+            .encode_image_internvl(tiles)
+            .map_err(|e| format!("--image {image_path}: {e}"))?;
+        if encoded.len()
+            != counts[rows.len()] * session.runner.vision_config().out_hidden_size as usize
+        {
+            return Err(format!(
+                "--image {image_path}: the tower produced {} row values against the {} tokens \
+                 the expansion reserved",
+                encoded.len(),
+                counts[rows.len()]
+            ));
+        }
+        rows.push(encoded);
+    }
+    session
+        .runner
+        .set_prompt_vision_flat(&rows, &spans, expanded.len())
+        .map_err(|e| format!("cannot inject the encoded images: {e}"))?;
+    Ok(expanded)
+}

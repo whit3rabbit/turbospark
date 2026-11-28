@@ -46,6 +46,8 @@ pub mod deepseek_ocr;
 pub mod deepseek_vl2;
 pub mod error;
 pub mod gemma4;
+pub mod idefics3;
+pub mod internvl;
 pub mod minicpm;
 pub mod mrope;
 pub mod muse;
@@ -85,11 +87,19 @@ pub use gemma4::{
     gemma4_soft_tokens_for, Gemma4ImageIds, Gemma4Patches, GEMMA4_DEFAULT_SOFT_TOKENS,
     GEMMA4_PATCH, GEMMA4_PATCH_DIM, GEMMA4_POOL, GEMMA4_SOFT_TOKEN_BUDGETS,
 };
+pub use idefics3::{
+    idefics3_expand_prompt, idefics3_longest_dims, idefics3_pixel_shuffle, idefics3_preprocess,
+    idefics3_tile_dims, Idefics3Params, Idefics3Tiles,
+};
+pub use internvl::{
+    internvl_expand_image_placeholders, internvl_pixel_shuffle, internvl_preprocess,
+    internvl_tile_grid, InternVlParams, InternVlTiles, INTERNVL_MEAN, INTERNVL_STD,
+};
 pub use minicpm::{
     canvas_positions, minicpm_preprocess, minicpm_resize_dims, minicpm_splice_and_positions,
-    MiniCpmIds, MiniCpmParams, MINICPM_IMAGE_ID_END, MINICPM_IMAGE_ID_START, MINICPM_MARKER_TOKENS,
-    MINICPM_MERGE, MINICPM_NEWLINE_ID, MINICPM_PATCH, MINICPM_SCALE_RESOLUTION,
-    MINICPM_SLICE_END_ID, MINICPM_SLICE_START_ID,
+    MiniCpmIds, MiniCpmParams, MiniCpmPositions, MINICPM_IMAGE_ID_END, MINICPM_IMAGE_ID_START,
+    MINICPM_MARKER_TOKENS, MINICPM_MERGE, MINICPM_NEWLINE_ID, MINICPM_PATCH,
+    MINICPM_SCALE_RESOLUTION, MINICPM_SLICE_END_ID, MINICPM_SLICE_START_ID,
 };
 pub use mrope::{
     mrope_position_triples, splice_and_walk, splice_image_placeholders,

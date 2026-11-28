@@ -93,6 +93,42 @@ pub const QWEN25_RESIDENT_TENSORS: [&str; 6] = [
     "merger.mlp.2.bias",
 ];
 
+/// The Qwen2-VL tower's twelve per-block sub-tensors, in forward order:
+/// LayerNorm (weight AND bias, unlike the 2.5 tower's RMSNorm weight-only),
+/// fused qkv with bias, proj with bias, LayerNorm, then the PLAIN two-layer
+/// MLP's fc1 and fc2 (no gate/up split). Read off
+/// `mlx-community/Qwen2-VL-2B-Instruct-4bit`
+/// (`docs/QWEN2VL_VISION_PHASE0.md`).
+pub const QWEN2_VL_BLOCK_ROLES: [(&str, &str); 12] = [
+    ("n1_w", "norm1.weight"),
+    ("n1_b", "norm1.bias"),
+    ("qkv_w", "attn.qkv.weight"),
+    ("qkv_b", "attn.qkv.bias"),
+    ("proj_w", "attn.proj.weight"),
+    ("proj_b", "attn.proj.bias"),
+    ("n2_w", "norm2.weight"),
+    ("n2_b", "norm2.bias"),
+    ("fc1_w", "mlp.fc1.weight"),
+    ("fc1_b", "mlp.fc1.bias"),
+    ("fc2_w", "mlp.fc2.weight"),
+    ("fc2_b", "mlp.fc2.bias"),
+];
+
+/// The Qwen2-VL tower's non-block tensors, resident. Same shapes and order
+/// story as [`QWEN25_RESIDENT_TENSORS`], with the merger's `ln_q` carrying a
+/// BIAS (a LayerNorm here, an RMSNorm on 2.5): patch embedding weight only
+/// (the conv is bias-free), then the merger's LayerNorm pair and its two
+/// MLP linears.
+pub const QWEN2_VL_RESIDENT_TENSORS: [&str; 7] = [
+    "patch_embed.proj.weight",
+    "merger.ln_q.weight",
+    "merger.ln_q.bias",
+    "merger.mlp.0.weight",
+    "merger.mlp.0.bias",
+    "merger.mlp.2.weight",
+    "merger.mlp.2.bias",
+];
+
 /// The tower's non-block tensors, which become RESIDENT entries.
 ///
 /// Nine of them, and they are resident rather than streamed because each is
@@ -311,7 +347,7 @@ pub fn read_vision_entries_quantized(
     }
     // The MiniCPM-V tower: three source prefixes (`vision_tower.`,
     // `vit_merger.`, `merger.`) and its own block roles.
-    if vision.tower == model_io::VisionTowerKind::MiniCpmV {
+    if vision.tower.is_minicpm_v() {
         return super::vision_minicpm::read_minicpm_vision_entries(shards, vision_bases, vision);
     }
     // Pixtral likewise: its own names, its own fused q/k/v, no biases.
@@ -352,21 +388,49 @@ pub fn read_vision_entries_quantized(
     if vision.tower == model_io::VisionTowerKind::Lfm3Vl {
         return super::vision_lfm3::read_lfm3_vl_vision_entries(shards, vision_bases, vision);
     }
+    // InternViT (the InternVL wrappers): two flavors under two prefixes, a
+    // fourteen-role block (the qwen twelve plus the layer-scale rows), and
+    // packed planes only on the projector.
+    if vision.tower == model_io::VisionTowerKind::InternViT {
+        return super::vision_internvl::read_internvl_vision_entries(
+            shards,
+            vision_bases,
+            vision,
+            quant,
+        );
+    }
+    // The variable-size SigLIP tower (the Idefics3 and SmolVLM wrappers):
+    // ONE prefix for both wrappers, the qwen twelve minus the layer-scale
+    // rows, and packed planes wherever the publisher quantized them (the
+    // SmolVLM builds quantize tower, position table and projector alike).
+    if vision.tower == model_io::VisionTowerKind::SigLipNaViT {
+        return super::vision_idefics3::read_idefics3_vision_entries(
+            shards,
+            vision_bases,
+            vision,
+            quant,
+        );
+    }
     // Muse-Glimmer spreads its tower over three prefixes, fuses q/k/v, and
     // quantizes the adapter and projection, so it has its own reader.
     if vision.tower == model_io::VisionTowerKind::MuseGlimmer {
         return super::vision_muse::read_muse_vision_entries(shards, vision_bases, vision, quant);
     }
-    // The Qwen2.5-VL tower shares this reader's walk and differs in its role
-    // tables and its supported depth.
+    // The Qwen2.5-VL and Qwen2-VL towers share this reader's walk and differ
+    // in their role tables and supported depths.
     let qwen25 = vision.tower == model_io::VisionTowerKind::Qwen25Vl;
+    let qwen2 = vision.tower == model_io::VisionTowerKind::Qwen2Vl;
     let (block_roles, resident_tensors): (&[(&str, &str)], &[&str]) = if qwen25 {
         (&QWEN25_BLOCK_ROLES, &QWEN25_RESIDENT_TENSORS)
+    } else if qwen2 {
+        (&QWEN2_VL_BLOCK_ROLES, &QWEN2_VL_RESIDENT_TENSORS)
     } else {
         (&BLOCK_ROLES, &RESIDENT_TENSORS)
     };
     let supported_depths: &[i64] = if qwen25 {
         &crate::qwen36_config::SUPPORTED_QWEN25_VISION_DEPTHS
+    } else if qwen2 {
+        &crate::qwen36_config::SUPPORTED_QWEN2_VL_VISION_DEPTHS
     } else {
         &SUPPORTED_VISION_DEPTHS
     };

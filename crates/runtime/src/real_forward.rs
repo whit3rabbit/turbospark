@@ -388,6 +388,9 @@ pub struct RealForwardRunner {
     pub(crate) gemma4_vision: Option<crate::vision::gemma4::Gemma4VisionTower>,
     /// The Qwen2.5-VL tower, opened lazily on the first image like the others.
     pub(crate) qwen25_vision: Option<crate::vision::qwen25::Qwen25VisionTower>,
+    /// The Qwen2-VL tower (the pre-2.5 sibling), opened lazily on the first
+    /// image like the others.
+    pub(crate) qwen2_vision: Option<crate::vision::qwen2::Qwen2VisionTower>,
     /// The MiniCPM-V tower, lazily opened by `encode_image` on a `minicpm_v`
     /// install (combined installs only).
     pub(crate) minicpm_vision: Option<crate::vision::minicpm::MiniCpmVisionTower>,
@@ -413,6 +416,13 @@ pub struct RealForwardRunner {
     /// The LLaVA-OneVision SigLIP tower, lazily opened by
     /// [`RealForwardRunner::encode_image_clip`].
     pub(crate) onevision_vision: Option<crate::vision::onevision::OneVisionTower>,
+    /// The InternViT tower (the InternVL wrappers), lazily opened by
+    /// [`RealForwardRunner::encode_image_internvl`]; a fourth field for the
+    /// same reason the Gemma 4 one is a separate field.
+    pub(crate) internvl_vision: Option<crate::vision::internvl::InternVlVisionTower>,
+    /// The Idefics3 / SmolVLM tower, lazily opened by
+    /// [`RealForwardRunner::encode_image_idefics3`].
+    pub(crate) idefics3_vision: Option<crate::vision::idefics3::Idefics3VisionTower>,
     /// A sidecar tower directory attached after open (vision memory
     /// sidecar, Part A2), via [`RealForwardRunner::attach_vision_sidecar`].
     /// `None` on every session that never called it, which is every session

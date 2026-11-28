@@ -27,6 +27,10 @@ pub fn parse_lfm3_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
         serde_json::from_str(json).map_err(|e| Gemma4Error::Config(e.to_string()))?;
     crate::arch_registry::refuse_foreign_config(&root, ModelFamily::Lfm3)
         .map_err(Gemma4Error::Config)?;
+    // A D1 decision model wears the chat checkpoint's `model_type` and trunk
+    // fields; its model class and `d1_*` keys tell them apart. Without this
+    // the probe would parse it into a chat ArchConfig and offer to install it.
+    crate::gemma4_checkpoint::refuse_lfm3_omni_d1(&root)?;
     let tc = root.get("text_config").unwrap_or(&root);
     let err = |m: String| Gemma4Error::Config(m);
 

@@ -184,7 +184,21 @@ fn template_prints_content_raw(source: &str) -> bool {
             .any(|needle| source.contains(needle))
 }
 
-fn message_to_json(message: &Message, flatten_image_parts: bool) -> JsonValue {
+/// Whether a template indexes `content` as a part list with no string arm.
+///
+/// The Idefics3 / SmolVLM templates read `message['content'][0]['type']` and
+/// loop over the parts, so a text-only turn handed over as a bare string
+/// renders EMPTY. Their upstream processor wraps such a string as one text
+/// part, and so does this.
+fn template_requires_content_parts(source: &str) -> bool {
+    source.contains("message['content'][0]['type']") && !source.contains("is string")
+}
+
+fn message_to_json(
+    message: &Message,
+    flatten_image_parts: bool,
+    wrap_text_content: bool,
+) -> JsonValue {
     let mut obj = serde_json::Map::new();
     obj.insert("role".to_string(), json!(message.role.as_str()));
     // A MULTIMODAL message renders as HF's content-part LIST; a text one
@@ -200,7 +214,13 @@ fn message_to_json(message: &Message, flatten_image_parts: bool) -> JsonValue {
     //
     // A text-only message takes the `content` branch byte for byte, which is
     // what leaves every frozen digest in `crates/bench` where it is.
-    if message.content_parts.is_empty() {
+    if message.content_parts.is_empty() && wrap_text_content {
+        let text = message.content.as_deref().unwrap_or_default();
+        obj.insert(
+            "content".to_string(),
+            json!([{"type": "text", "text": text, "content": text}]),
+        );
+    } else if message.content_parts.is_empty() {
         obj.insert("content".to_string(), json!(message.content));
     } else if flatten_image_parts {
         // The exception to the paragraph above: this template has no part arm,
@@ -325,13 +345,14 @@ pub fn render_generic_chat_template(
 
     let flatten_image_parts =
         template_prints_content_raw(source) && tokenizer.token_to_id(IMAGE_MARKER).is_some();
+    let wrap_text_content = template_requires_content_parts(source);
     let mut context = serde_json::Map::new();
     context.insert(
         "messages".to_string(),
         JsonValue::Array(
             messages
                 .iter()
-                .map(|m| message_to_json(m, flatten_image_parts))
+                .map(|m| message_to_json(m, flatten_image_parts, wrap_text_content))
                 .collect(),
         ),
     );

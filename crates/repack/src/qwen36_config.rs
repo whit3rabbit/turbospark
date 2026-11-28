@@ -316,10 +316,18 @@ pub fn parse_vision_config(json: &str) -> Result<VisionConfig, Gemma4Error> {
     if root.get("model_type").and_then(serde_json::Value::as_str) == Some("qwen2_5_vl") {
         return parse_qwen25_vl_vision_config(root, vc);
     }
+    // Qwen2-VL likewise, and for its own third vocabulary (`embed_dim` for
+    // the tower width, `mlp_ratio` for the MLP width, no window keys at all).
+    if root.get("model_type").and_then(serde_json::Value::as_str) == Some("qwen2_vl") {
+        return parse_qwen2_vl_vision_config(root, vc);
+    }
     if root.get("model_type").and_then(serde_json::Value::as_str) == Some("muse_glimmer") {
         return parse_muse_vision_config(root, vc);
     }
-    if root.get("model_type").and_then(serde_json::Value::as_str) == Some("minicpmv4_7") {
+    if matches!(
+        root.get("model_type").and_then(serde_json::Value::as_str),
+        Some("minicpmv4_6" | "minicpmv4_7")
+    ) {
         return parse_minicpm_v_vision_config(root, vc);
     }
     let i = |k: &str| -> Result<i64, Gemma4Error> {
@@ -780,6 +788,228 @@ fn parse_qwen25_vl_vision_config(
     Ok(vision)
 }
 
+/// Blocks in every published Qwen2-VL tower (2B, 7B, 57B-A2B and 72B all
+/// declare depth 32).
+pub(crate) const SUPPORTED_QWEN2_VL_VISION_DEPTHS: [i64; 1] = [32];
+
+/// The Qwen2-VL block MLP's activation, spelled as transformers spells it
+/// (`Qwen2VLVisionConfig.hidden_act`, default `quick_gelu`, which configs
+/// re-saved by transformers carry explicitly). It is `x * sigmoid(1.702 x)`,
+/// the same function as mlx-vlm's hardcoded `nn.GELU(approx="fast")` and the
+/// runtime's `GeluKind::Quick`. Any other spelling, `gelu` (erf) included, is
+/// a different function and is refused.
+pub(crate) const QWEN2_VL_VISION_ACT: &str = "quick_gelu";
+
+/// `vision_config` of a `qwen2_vl` checkpoint (read off
+/// `mlx-community/Qwen2-VL-2B-Instruct-4bit` @
+/// `01af461cdb9574acc09084a0ef94e216e142b085`,
+/// `docs/QWEN2VL_VISION_PHASE0.md`).
+///
+/// The pre-2.5 sibling of [`parse_qwen25_vl_vision_config`], and a THIRD key
+/// vocabulary rather than a mode of it: the tower width is `embed_dim` (the
+/// 2B tower is 1280 wide against a 1536-wide trunk), the MLP width comes from
+/// the float `mlp_ratio` rather than an `intermediate_size` key, there is no
+/// `out_hidden_size` (the merger output width IS the block's `hidden_size`,
+/// which on this family names the TRUNK), and no window keys at all -- every
+/// block attends over the whole image. The activation key is absent from the
+/// published file and the layer-norm epsilon likewise (1e-6, the reference's
+/// own default); each is CHECKED when present against the kind constant and
+/// never stored, which keeps the `VisionConfig` float-free.
+///
+/// `mrope_section` is read the way the trunk spells it: the published
+/// conversions carry the flat `rope_scaling` object at the root (same as the
+/// `qwen2_5_vl` reader above), and the HF-native wrapper spelling
+/// `text_config.rope_scaling` / `text_config.rope_parameters` is accepted as
+/// a fallback, named in the refusal when none is present. A deepstack key is
+/// REFUSED by name: Qwen2-VL has no deepstack (that is Qwen3-VL), so its
+/// presence means this reader has been handed a tower from a different
+/// family, and silently dropping the key would drop the injection with it.
+fn parse_qwen2_vl_vision_config(
+    root: &serde_json::Value,
+    vc: &serde_json::Value,
+) -> Result<VisionConfig, Gemma4Error> {
+    let i = |k: &str| -> Result<i64, Gemma4Error> {
+        vc.get(k)
+            .and_then(serde_json::Value::as_i64)
+            .ok_or_else(|| Gemma4Error::Config(format!("missing vision_config.{k}")))
+    };
+    // The window keys are the 2.5 tower's. Their presence on a `qwen2_vl`
+    // file means the file describes a tower whose blocks do NOT all run full
+    // attention, which is a different forward pass -- refused, never run
+    // full-attention anyway.
+    for key in ["window_size", "fullatt_block_indexes"] {
+        if vc.get(key).is_some() {
+            return Err(Gemma4Error::Config(format!(
+                "qwen2_vl vision_config carries {key}, which belongs to the qwen2_5_vl \
+                 window-attention tower; this port runs the qwen2_vl tower full attention on \
+                 every block and will not guess the pattern"
+            )));
+        }
+    }
+    // Deepstack is Qwen3-VL's. Refused by name rather than defaulted empty:
+    // dropping the key would drop the trunk injections it describes.
+    if vc.get("deepstack_visual_indexes").is_some() {
+        return Err(Gemma4Error::Config(
+            "qwen2_vl vision_config carries deepstack_visual_indexes; Qwen2-VL has no \
+             deepstack (that is qwen3_vl), so this file does not describe the tower this \
+             reader implements"
+                .to_string(),
+        ));
+    }
+    if let Some(act) = vc.get("hidden_act").and_then(serde_json::Value::as_str) {
+        if act != QWEN2_VL_VISION_ACT {
+            return Err(Gemma4Error::Config(format!(
+                "qwen2_vl vision hidden_act {act:?} is not {QWEN2_VL_VISION_ACT:?}, the only \
+                 activation this tower runs"
+            )));
+        }
+    }
+    // The kind constant, checked when declared. ABSENT means the reference's
+    // own default of 1e-6, which is what the runtime encodes; it is a
+    // property of the kind and is never stored (AGENTS.md Gotcha 39: the
+    // format's silence means its own default, not a sibling's value).
+    if let Some(eps) = vc.get("layer_norm_eps").and_then(serde_json::Value::as_f64) {
+        if (eps - 1e-6).abs() > 1e-12 {
+            return Err(Gemma4Error::Config(format!(
+                "qwen2_vl vision layer_norm_eps {eps} is not the 1e-6 this port encodes"
+            )));
+        }
+    }
+    // The trunk's mrope split, in the spellings a Qwen2-VL file has used.
+    // The published conversions spell it at the flat root; the HF-native
+    // wrapper nests it under text_config. Two places, one meaning.
+    let tc = root.get("text_config").unwrap_or(root);
+    let section = root
+        .get("rope_scaling")
+        .and_then(|r| r.get("mrope_section"))
+        .or_else(|| tc.get("rope_scaling").and_then(|r| r.get("mrope_section")))
+        .or_else(|| {
+            tc.get("rope_parameters")
+                .and_then(|r| r.get("mrope_section"))
+        })
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| {
+            Gemma4Error::Config(
+                "a qwen2_vl config with no rope_scaling.mrope_section (root or text_config) \
+                 or text_config.rope_parameters.mrope_section; the trunk cannot place image \
+                 tokens without it"
+                    .to_string(),
+            )
+        })?;
+    if let Some(kind) = root
+        .get("rope_scaling")
+        .and_then(|r| r.get("type"))
+        .or_else(|| tc.get("rope_scaling").and_then(|r| r.get("type")))
+        .and_then(serde_json::Value::as_str)
+    {
+        // The reference's own check (`qwen2_vl/config.py`, TextConfig
+        // `__post_init__`): only these two types carry an mrope_section.
+        if kind != "mrope" && kind != "default" {
+            return Err(Gemma4Error::Config(format!(
+                "qwen2_vl rope_scaling type {kind:?} is neither mrope nor default"
+            )));
+        }
+    }
+    if section.len() != 3 {
+        return Err(Gemma4Error::Config(format!(
+            "mrope_section has {} entries, expected the (t, h, w) triple",
+            section.len()
+        )));
+    }
+    let mut mrope_section = [0i64; 3];
+    for (slot, v) in mrope_section.iter_mut().zip(section) {
+        *slot = v
+            .as_i64()
+            .ok_or_else(|| Gemma4Error::Config("mrope_section entry is not an integer".into()))?;
+    }
+    // The MLP width is a float relation on this family (`mlp_ratio`), not a
+    // stored key. The product must be an exact positive integer to be a row
+    // count at all, and the float itself is never copied into the config
+    // (manifest floats round-trip only at binary fractions, Gotcha 24).
+    let embed_dim = i("embed_dim")?;
+    let ratio = vc
+        .get("mlp_ratio")
+        .and_then(serde_json::Value::as_f64)
+        .ok_or_else(|| Gemma4Error::Config("missing vision_config.mlp_ratio".into()))?;
+    let width = embed_dim as f64 * ratio;
+    if !ratio.is_finite() || width.fract() != 0.0 || width <= 0.0 || width > i64::MAX as f64 {
+        return Err(Gemma4Error::Config(format!(
+            "qwen2_vl mlp_ratio {ratio} x embed_dim {embed_dim} = {width}, which is not a \
+             positive whole MLP width"
+        )));
+    }
+    let trunk_hidden = root
+        .get("hidden_size")
+        .and_then(serde_json::Value::as_i64)
+        .ok_or_else(|| Gemma4Error::Config("missing hidden_size (the trunk width)".into()))?;
+    // On this family `vision_config.hidden_size` names the TRUNK width: it is
+    // the merger's output (`PatchMerger(dim=config.hidden_size, ...)`), not
+    // the block's residual width -- that is `embed_dim` here. Refusing a
+    // disagreement keeps a tower whose merger writes into the wrong width
+    // from installing.
+    let vision_hidden = i("hidden_size")?;
+    if vision_hidden != trunk_hidden {
+        return Err(Gemma4Error::Config(format!(
+            "qwen2_vl vision_config.hidden_size {vision_hidden} is not the trunk hidden_size \
+             {trunk_hidden}; on this family it names the width the merger writes into"
+        )));
+    }
+    let vision = VisionConfig {
+        depth: i("depth")?,
+        hidden_size: embed_dim,
+        intermediate_size: width as i64,
+        num_heads: i("num_heads")?,
+        patch_size: i("patch_size")?,
+        temporal_patch_size: i("temporal_patch_size")?,
+        in_channels: i("in_chans")?,
+        spatial_merge_size: i("spatial_merge_size")?,
+        // No learned position table: the tower is positioned by rope alone.
+        num_position_embeddings: 0,
+        out_hidden_size: trunk_hidden,
+        mrope_section,
+        deepstack_visual_indexes: Vec::new(),
+        vision_start_token_id: root_i(root, "vision_start_token_id")?,
+        vision_end_token_id: root_i(root, "vision_end_token_id")?,
+        image_token_id: root_i(root, "image_token_id")?,
+        video_token_id: root_i(root, "video_token_id")?,
+        tower: model_io::VisionTowerKind::Qwen2Vl,
+    };
+    if !SUPPORTED_QWEN2_VL_VISION_DEPTHS.contains(&vision.depth) {
+        return Err(Gemma4Error::Config(format!(
+            "qwen2_vl vision depth {} is unsupported; expected one of \
+             {SUPPORTED_QWEN2_VL_VISION_DEPTHS:?}",
+            vision.depth
+        )));
+    }
+    if vision.patch_size != 14
+        || vision.temporal_patch_size != 2
+        || vision.spatial_merge_size != 2
+        || vision.in_channels != 3
+    {
+        return Err(Gemma4Error::Config(format!(
+            "qwen2_vl tower geometry patch {} x temporal {} x merge {} x {} channels is not \
+             the 14 x 2 x 2 x 3 every published checkpoint declares",
+            vision.patch_size,
+            vision.temporal_patch_size,
+            vision.spatial_merge_size,
+            vision.in_channels
+        )));
+    }
+    if vision.num_heads <= 0 || vision.hidden_size % vision.num_heads != 0 {
+        return Err(Gemma4Error::Config(format!(
+            "qwen2_vl vision embed_dim {} is not divisible by num_heads {}",
+            vision.hidden_size, vision.num_heads
+        )));
+    }
+    if (vision.hidden_size / vision.num_heads) % 4 != 0 {
+        return Err(Gemma4Error::Config(format!(
+            "qwen2_vl vision head_dim {} must be a multiple of 4 for the 2-D rope",
+            vision.hidden_size / vision.num_heads
+        )));
+    }
+    Ok(vision)
+}
+
 /// The MiniCPM-V 4.7 tower's constants, checked against the checkpoint rather
 /// than stored (`VisionTowerKind::MiniCpmV`). Read off
 /// `mlx-community/MiniCPM-V-4.7-35B-A3B-mxfp4` and mlx-vlm's
@@ -796,31 +1026,63 @@ pub const MINICPM_V_MERGE: i64 = 4;
 pub const MINICPM_V_SLICE_START_ID: i64 = 248088;
 pub const MINICPM_V_SLICE_END_ID: i64 = 248089;
 pub const MINICPM_V_NEWLINE_ID: i64 = 198;
+/// `<|image_pad|>`, `<image>` and `</image>` in the MiniCPM-V vocabulary. A
+/// 4.7 config names all three; a 4.6 config names only the first, and the
+/// reference resolves the markers from the tokenizer by name, so they are
+/// constants of the 4.6 kind (checked against the tokenizer at attach).
+pub const MINICPM_V_IMAGE_PAD_ID: i64 = 248056;
+pub const MINICPM_V_IMAGE_START_ID: i64 = 248078;
+pub const MINICPM_V_IMAGE_END_ID: i64 = 248079;
 
-/// `config.json` of a `minicpmv4_7` wrapper. Everything that varies is read
-/// from the file; everything the 4.7 reference hardcodes (the 27-block SigLIP,
-/// the insert layer, the `16x` mode, the 2x2 mergers, the canvas rope, the
+/// `config.json` of a `minicpmv4_7` or `minicpmv4_6` wrapper. Everything that
+/// varies is read from the file; everything the reference hardcodes (the
+/// 27-block SigLIP, the insert layer, the `16x` mode, the 2x2 mergers, the
 /// marker ids) is checked, and a checkpoint that disagrees is refused rather
 /// than run with the wrong merger geometry.
+///
+/// The two differ in what the file says. 4.7 declares `mrope_mode: canvas`
+/// and its marker ids over a MoE trunk. 4.6 declares neither (the reference
+/// gives every token its sequential position), carries a dense `qwen3_5_text`
+/// trunk, and may omit `downsample_mode` and `mrope_section`, for which the
+/// reference's defaults are `16x` and `[11, 11, 10]`.
 fn parse_minicpm_v_vision_config(
     root: &serde_json::Value,
     vc: &serde_json::Value,
 ) -> Result<VisionConfig, Gemma4Error> {
+    let wrapper = root
+        .get("model_type")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let v46 = wrapper == "minicpmv4_6";
+    let refuse = |what: String| Err(Gemma4Error::Config(format!("{wrapper}: {what}")));
     let i = |k: &str| -> Result<i64, Gemma4Error> {
         vc.get(k)
             .and_then(serde_json::Value::as_i64)
             .ok_or_else(|| Gemma4Error::Config(format!("missing vision_config.{k}")))
     };
     let tc = root.get("text_config").unwrap_or(root);
-    let section = tc
+    let trunk = tc.get("model_type").and_then(serde_json::Value::as_str);
+    if v46 && trunk != Some("qwen3_5_text") {
+        return refuse(format!(
+            "text_config.model_type {trunk:?}; the 4.6 reference runs a dense qwen3_5_text \
+             trunk only"
+        ));
+    }
+    let section = match tc
         .get("rope_parameters")
         .and_then(|r| r.get("mrope_section"))
-        .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| {
-            Gemma4Error::Config(
-                "a minicpmv4_7 config with no text_config.rope_parameters.mrope_section".into(),
-            )
-        })?;
+    {
+        Some(v) => v.as_array().cloned(),
+        // Sequential positions are equal on all three axes, so the split
+        // cannot change a value; this is the reference's own default.
+        None if v46 => Some(vec![11.into(), 11.into(), 10.into()]),
+        None => None,
+    }
+    .ok_or_else(|| {
+        Gemma4Error::Config(format!(
+            "a {wrapper} config with no text_config.rope_parameters.mrope_section"
+        ))
+    })?;
     if section.len() != 3 {
         return Err(Gemma4Error::Config(format!(
             "mrope_section has {} entries, expected the (t, h, w) triple",
@@ -828,7 +1090,7 @@ fn parse_minicpm_v_vision_config(
         )));
     }
     let mut mrope_section = [0i64; 3];
-    for (slot, v) in mrope_section.iter_mut().zip(section) {
+    for (slot, v) in mrope_section.iter_mut().zip(&section) {
         *slot = v
             .as_i64()
             .ok_or_else(|| Gemma4Error::Config("mrope_section entry is not an integer".into()))?;
@@ -837,10 +1099,21 @@ fn parse_minicpm_v_vision_config(
     let image_size = i("image_size")?;
     if patch <= 0 || image_size % patch != 0 {
         return Err(Gemma4Error::Config(format!(
-            "minicpmv4_7 vision image_size {image_size} is not a multiple of patch_size {patch}"
+            "{wrapper} vision image_size {image_size} is not a multiple of patch_size {patch}"
         )));
     }
     let side = image_size / patch;
+    let marker = |key: &str, fixed: i64| -> Result<i64, Gemma4Error> {
+        if !v46 {
+            return root_i(root, key);
+        }
+        match root.get(key) {
+            Some(v) if v.as_i64() != Some(fixed) => Err(Gemma4Error::Config(format!(
+                "{wrapper}: {key} {v} is not the vocabulary's {fixed}"
+            ))),
+            _ => Ok(fixed),
+        }
+    };
     let vision = VisionConfig {
         depth: i("num_hidden_layers")?,
         hidden_size: i("hidden_size")?,
@@ -857,13 +1130,24 @@ fn parse_minicpm_v_vision_config(
             .ok_or_else(|| Gemma4Error::Config("missing text_config.hidden_size".into()))?,
         mrope_section,
         deepstack_visual_indexes: Vec::new(),
-        vision_start_token_id: root_i(root, "image_start_id")?,
-        vision_end_token_id: root_i(root, "image_end_id")?,
+        vision_start_token_id: marker("image_start_id", MINICPM_V_IMAGE_START_ID)?,
+        vision_end_token_id: marker("image_end_id", MINICPM_V_IMAGE_END_ID)?,
         image_token_id: root_i(root, "image_token_id")?,
         video_token_id: root_i(root, "video_token_id")?,
-        tower: model_io::VisionTowerKind::MiniCpmV,
+        tower: if v46 {
+            model_io::VisionTowerKind::MiniCpmV46
+        } else {
+            model_io::VisionTowerKind::MiniCpmV
+        },
     };
-    let refuse = |what: String| Err(Gemma4Error::Config(format!("minicpmv4_7: {what}")));
+    // The 4.6 marker constants are only meaningful in the vocabulary they
+    // were read from, which the one id the file does name identifies.
+    if v46 && vision.image_token_id != MINICPM_V_IMAGE_PAD_ID {
+        return refuse(format!(
+            "image_token_id {} is not the vocabulary's {MINICPM_V_IMAGE_PAD_ID}",
+            vision.image_token_id
+        ));
+    }
     if vision.depth != MINICPM_V_DEPTH
         || vision.patch_size != 14
         || vision.in_channels != 3
@@ -898,14 +1182,25 @@ fn parse_minicpm_v_vision_config(
             root_i64("insert_layer_id")
         ));
     }
-    if root
-        .get("downsample_mode")
-        .and_then(serde_json::Value::as_str)
-        != Some("16x")
-    {
+    let downsample = root.get("downsample_mode");
+    let default_16x = v46 && downsample.is_none();
+    if !default_16x && downsample.and_then(serde_json::Value::as_str) != Some("16x") {
         return refuse("only the default 16x downsample mode is built".into());
     }
-    if root.get("mrope_mode").and_then(serde_json::Value::as_str) != Some("canvas") {
+    let mrope_mode = root.get("mrope_mode");
+    if v46 {
+        if let Some(mode) = mrope_mode {
+            return refuse(format!(
+                "mrope_mode {mode} is declared, but the 4.6 reference uses sequential positions"
+            ));
+        }
+        if root
+            .get("drop_vision_last_layer")
+            .is_some_and(|v| v != &serde_json::Value::Bool(false))
+        {
+            return refuse("drop_vision_last_layer is not built".into());
+        }
+    } else if mrope_mode.and_then(serde_json::Value::as_str) != Some("canvas") {
         return refuse("mrope_mode must be canvas".into());
     }
     for key in ["merge_kernel_size", "window_kernel_size"] {
@@ -927,9 +1222,10 @@ fn parse_minicpm_v_vision_config(
         ("slice_end_id", MINICPM_V_SLICE_END_ID),
         ("newline_id", MINICPM_V_NEWLINE_ID),
     ] {
-        if root_i64(key) != Some(want) {
+        let absent_46 = v46 && root.get(key).is_none();
+        if !absent_46 && root_i64(key) != Some(want) {
             return refuse(format!(
-                "{key} {:?} is not the {want} the canvas rope absorbs",
+                "{key} {:?} is not the {want} the prompt layout uses",
                 root_i64(key)
             ));
         }

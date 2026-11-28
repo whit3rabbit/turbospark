@@ -37,14 +37,24 @@ pub fn parse_qwen3_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
         serde_json::from_str(json).map_err(|e| Gemma4Error::Config(e.to_string()))?;
     crate::arch_registry::refuse_foreign_config(&root, ModelFamily::Qwen3Dense)
         .map_err(Gemma4Error::Config)?;
-    // Plain `qwen3` is flat. A `text_config` here means a wrapper of some
-    // other architecture whose own model_type the registry did not resolve.
-    if root.get("text_config").is_some() {
-        return Err(Gemma4Error::Config(
-            "a qwen3 config carries no text_config wrapper; this is not plain dense qwen3".into(),
-        ));
-    }
-    let tc = &root;
+    // Plain `qwen3` is flat. ONE wrapper is accepted beside it: the `internvl`
+    // wrapper (`mlx-community/InternVL3_5-1B-4bit` @ f9d179a8), whose trunk
+    // fields sit inside a plain-qwen3 `text_config` exactly as they would at
+    // the root. Any other wrapper means a config whose own model_type the
+    // registry did not resolve, which is not a trunk to parse as Qwen.
+    let internvl_wrapper = root.get("model_type").and_then(serde_json::Value::as_str)
+        == Some(crate::gemma4_checkpoint::INTERNVL_MODEL_TYPE);
+    let tc = match root.get("text_config") {
+        None => &root,
+        Some(tc) if internvl_wrapper => tc,
+        Some(_) => {
+            return Err(Gemma4Error::Config(
+                "a qwen3 config carries no text_config wrapper; this is not plain dense qwen3 \
+                 (the one accepted wrapper is model_type internvl)"
+                    .into(),
+            ))
+        }
+    };
 
     let i = |key: &str| -> Result<i64, Gemma4Error> {
         tc.get(key)

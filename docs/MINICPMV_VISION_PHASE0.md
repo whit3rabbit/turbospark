@@ -185,3 +185,80 @@ minicpm-v47-vision`. `turbospark-check --messages-file ... --image ...
 The content that is only in the image (shape colors, `4217`) is what is
 asserted. Not run: speculative decoding with an image (refused by design), the
 `<slice>` detail crops (not built), a second image in one turn, 4x mode.
+
+## MiniCPM-V 4.6 (dense qwen3.5 trunk), 2026-11-27
+
+**Smoked on real weights once, no tower parity.**
+`mlx-community/MiniCPM-V-4.6-4bit@86cd463d` (release CLI, greedy, 2.0 GiB
+install, removed afterwards): text answers Jupiter; a large-text page
+(`MARIGOLD` / `HARBOR 4821` / `GATE PAGE` / `magic word:` / `zephyr`) reads
+back all five lines exactly (prefill 90); with no image it invents unrelated
+text (prefill 21); a dense small-text page is not legible, as expected of one
+thumbnail view. Keeping the empty think block did not break the image turn.
+
+### Published metadata read
+
+Only configs, tokenizer files and safetensors headers were fetched.
+
+| Repo | Revision | Download | Status here |
+| --- | --- | --- | --- |
+| `mlx-community/MiniCPM-V-4.6-4bit` | `86cd463d33a946e4481b77e3c10fc63121b60a19` | 2,157,823,786 bytes of weights (about 2.18 GB with the tokenizer) | the intended gate |
+| `mlx-community/MiniCPM-V-4.6-8bit` | `03721395f6b82cd000cc74cde28fcff8abd9a04c` | about 2.33 GB | same intake, headers not read |
+| `mlx-community/MiniCPM-V-4.6-bf16` | `993c9b1ac21ae5329c1f6549c58effabb11c8279` | about 2.62 GB | refused: no quantization block |
+| `openbmb/MiniCPM-V-4.6` | `97328f3c2d70c4645b6a35594807eb6932068635` | about 2.62 GB | refused: BF16, `model.vision_tower.*` names, channels-first patch kernel |
+
+The 4-bit trunk is `qwen3_5_text`: 24 layers, hidden 1024, vocab 248094, tied
+head, affine 4-bit at group 64. `embed_tokens` and every `linear_attn` tensor
+are BF16, and so is the whole tower. Tower names and shapes equal 4.7's except
+`merger.mlp.0.linear_2`, which is `[1024, 4608]`.
+
+### Differences from 4.7
+
+| Item | 4.7 | 4.6 |
+| --- | --- | --- |
+| Trunk | `qwen3_5_moe_text` | `qwen3_5_text` |
+| Tower kind | `minicpm_v` | `minicpm_v46` |
+| Positions | canvas mRoPE (`CanvasRoPE`) | plain sequential on all three axes (`_set_position_state`) |
+| `<image>` / `</image>` ids | in `config.json` | not in it; constants 248078 / 248079, checked against the tokenizer |
+| `downsample_mode`, `mrope_section` | declared | absent; reference defaults `16x` (also in `processor_config.json`) and `[11, 11, 10]` |
+| GELU | tanh everywhere | the same: the reference's `"precise"` in `vit_merger` and `merger` is MLX's alias for `"tanh"` |
+| Preprocessing | thumbnail view | the same resize, normalization and `<image_id>` layout |
+| Sidecar | refused | refused |
+| Quantize on install | unchanged | refused by name |
+
+### Known deviation: the empty think block
+
+mlx-vlm's 4.6 processor deletes the exact text `<think>\n\n</think>\n\n`
+(`_strip_think_prefix`) from every prompt; its 4.7 processor keeps it. This
+port keeps it, as the checkpoint's own template renders it (ids 248068, 271,
+248069, 271). If a real install answers an image turn with blank or looping
+output, try this first.
+
+### What was checked
+
+- Config, probe, classification, sidecar refusal, position rule and the
+  channels-last kernel check: unit tests (`crates/repack/tests/minicpm_v46_config.rs`
+  and tests beside each module).
+- Plumbing only: a **zero-filled** file carrying the 4-bit repo's real
+  safetensors header, real config and real tokenizer, served from localhost,
+  went through `turbospark-model pull --repo`, produced a `minicpm_v46`
+  install with `packed_vision/`, and ran a 448 x 448 image turn through
+  `turbospark-check` to completion (64 image tokens, 85 prompt tokens). With
+  zero weights the output is meaningless, so this shows shapes, dtypes and
+  bindings are accepted and nothing about correctness.
+
+### Owed
+
+A real install of the 4-bit repo; the tower parity test against
+`scripts/minicpm_v_tower_reference.py` (its merger output width is now 1024,
+and neither the script nor the ignored test was run on 4.6); text and image
+smokes with a no-image control; a server run; `4x` mode and `<slice>` crops
+are not built.
+
+```sh
+turbospark-model pull --repo \
+  mlx-community/MiniCPM-V-4.6-4bit@86cd463d33a946e4481b77e3c10fc63121b60a19 \
+  --alias minicpm-v46-4bit
+turbospark-check --model minicpm-v46-4bit --messages-file msg.json \
+  --temperature 0 --top-k 1
+```

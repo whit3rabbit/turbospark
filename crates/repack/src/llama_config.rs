@@ -43,36 +43,65 @@ pub fn parse_llama_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
         .map_err(Gemma4Error::Config)?;
     let config_err = |msg: String| Gemma4Error::Config(msg);
 
-    // ROOT ONLY. `text_config.model_type: llama` is how LLaVA-style wrappers
-    // describe their trunk, and their tower and weight layout were not read.
-    // A config with no model_type at all (trimmed fixtures) is accepted,
-    // which is `refuse_foreign_config`'s rule too.
-    match root.get("model_type").and_then(serde_json::Value::as_str) {
-        None | Some("llama") | Some("mistral") => {}
-        Some(other) => {
-            return Err(config_err(format!(
-                "model_type {other:?} wraps a llama trunk; only plain llama and mistral \
-                 configs install through this intake"
-            )))
+    // ROOT ONLY, with one wrapper. `text_config.model_type: llama` is how
+    // LLaVA-style wrappers describe their trunk, and their tower and weight
+    // layout were not read. A config with no model_type at all (trimmed
+    // fixtures) is accepted, which is `refuse_foreign_config`'s rule too. The
+    // Idefics3 / SmolVLM wrappers are the exception: their trunk fields sit in
+    // `text_config`, their tensors were read off published indexes
+    // (`docs/IDEFICS3_VISION_PHASE0.md`) and their tower has its own parser.
+    let idefics3_wrapper = matches!(
+        root.get("model_type").and_then(serde_json::Value::as_str),
+        Some(crate::gemma4_checkpoint::IDEFICS3_MODEL_TYPE)
+            | Some(crate::gemma4_checkpoint::SMOLVLM_MODEL_TYPE)
+    );
+    let trunk = if idefics3_wrapper {
+        let trunk = root
+            .get("text_config")
+            .filter(|v| v.is_object())
+            .ok_or_else(|| {
+                config_err("an idefics3 or smolvlm config carries its trunk in text_config".into())
+            })?;
+        match trunk.get("model_type").and_then(serde_json::Value::as_str) {
+            None | Some("llama") => {}
+            Some(other) => {
+                return Err(config_err(format!(
+                    "text_config.model_type {other:?}; only a llama trunk installs under this \
+                     wrapper"
+                )))
+            }
         }
-    }
-    if root.get("vision_config").is_some() || root.get("text_config").is_some() {
-        return Err(config_err(
-            "a llama config with vision_config or text_config is a multimodal wrapper, \
-             which this intake does not install"
-                .into(),
-        ));
-    }
+        trunk
+    } else {
+        match root.get("model_type").and_then(serde_json::Value::as_str) {
+            None | Some("llama") | Some("mistral") => {}
+            Some(other) => {
+                return Err(config_err(format!(
+                    "model_type {other:?} wraps a llama trunk; only plain llama and mistral \
+                     configs install through this intake"
+                )))
+            }
+        }
+        if root.get("vision_config").is_some() || root.get("text_config").is_some() {
+            return Err(config_err(
+                "a llama config with vision_config or text_config is a multimodal wrapper, \
+                 which this intake does not install"
+                    .into(),
+            ));
+        }
+        &root
+    };
 
     let i = |key: &str| -> Result<i64, Gemma4Error> {
-        root.get(key)
+        trunk
+            .get(key)
             .and_then(serde_json::Value::as_i64)
             .ok_or_else(|| Gemma4Error::Config(format!("missing {key}")))
     };
     let hidden_size = i("hidden_size")?;
     let num_heads = i("num_attention_heads")?;
     // HF `LlamaConfig` defaults this to `num_attention_heads` (plain MHA).
-    let num_kv_heads = match root.get("num_key_value_heads") {
+    let num_kv_heads = match trunk.get("num_key_value_heads") {
         None | Some(serde_json::Value::Null) => num_heads,
         Some(v) => v
             .as_i64()
@@ -99,7 +128,7 @@ pub fn parse_llama_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
     }
     // An explicit `head_dim` may differ from hidden / heads (Mistral Nemo);
     // `null` or absent means the quotient, which must then be exact.
-    let head_dim = match root.get("head_dim") {
+    let head_dim = match trunk.get("head_dim") {
         None | Some(serde_json::Value::Null) => {
             if hidden_size % num_heads != 0 {
                 return Err(config_err(format!(
@@ -115,7 +144,7 @@ pub fn parse_llama_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
             .ok_or_else(|| config_err(format!("head_dim {v} must be a positive even integer")))?,
     };
 
-    let rms_norm_eps = root
+    let rms_norm_eps = trunk
         .get("rms_norm_eps")
         .and_then(serde_json::Value::as_f64)
         .ok_or_else(|| config_err("missing rms_norm_eps".into()))?;
@@ -125,7 +154,7 @@ pub fn parse_llama_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
              {rms_norm_eps:e}, which it cannot honour"
         )));
     }
-    let hidden_activation = root
+    let hidden_activation = trunk
         .get("hidden_act")
         .and_then(serde_json::Value::as_str)
         .unwrap_or("silu");
@@ -135,14 +164,14 @@ pub fn parse_llama_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
         )));
     }
     for key in ["attention_bias", "mlp_bias"] {
-        if root.get(key).and_then(serde_json::Value::as_bool) == Some(true) {
+        if trunk.get(key).and_then(serde_json::Value::as_bool) == Some(true) {
             return Err(config_err(format!(
                 "{key} is true; the llama flow carries no projection biases for this family"
             )));
         }
     }
     for key in ["num_local_experts", "num_experts"] {
-        if root
+        if trunk
             .get(key)
             .and_then(serde_json::Value::as_i64)
             .unwrap_or(0)
@@ -154,7 +183,7 @@ pub fn parse_llama_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
             )));
         }
     }
-    match root.get("sliding_window") {
+    match trunk.get("sliding_window") {
         None | Some(serde_json::Value::Null) => {}
         Some(v) => {
             return Err(config_err(format!(
@@ -163,7 +192,7 @@ pub fn parse_llama_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
             )))
         }
     }
-    if root
+    if trunk
         .get("partial_rotary_factor")
         .and_then(serde_json::Value::as_f64)
         .is_some_and(|p| p != 1.0)
@@ -175,10 +204,10 @@ pub fn parse_llama_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
 
     // transformers v5 moves the rope keys into `rope_parameters`; older
     // configs keep `rope_theta` at the root and `rope_scaling` beside it.
-    let rope_parameters = root.get("rope_parameters").filter(|v| !v.is_null());
+    let rope_parameters = trunk.get("rope_parameters").filter(|v| !v.is_null());
     let rope_theta = rope_parameters
         .and_then(|p| p.get("rope_theta"))
-        .or_else(|| root.get("rope_theta"))
+        .or_else(|| trunk.get("rope_theta"))
         .and_then(serde_json::Value::as_f64)
         .unwrap_or(DEFAULT_ROPE_THETA);
     if !rope_theta.is_finite() || rope_theta <= 1.0 {
@@ -187,7 +216,7 @@ pub fn parse_llama_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
         )));
     }
     let scaling = rope_parameters
-        .or_else(|| root.get("rope_scaling"))
+        .or_else(|| trunk.get("rope_scaling"))
         .filter(|v| !v.is_null());
     let rope_freq_factors = match scaling {
         None => Vec::new(),
@@ -214,7 +243,7 @@ pub fn parse_llama_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
         num_dense_leading_layers: 0,
         num_experts: 0,
         top_k_experts: 0,
-        tie_word_embeddings: root
+        tie_word_embeddings: trunk
             .get("tie_word_embeddings")
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false),
@@ -445,5 +474,26 @@ mod tests {
         let arch = parse_llama_config(&cfg).unwrap();
         assert_eq!(arch.num_kv_heads, arch.num_heads);
         assert_eq!(arch.full_rope_theta, DEFAULT_ROPE_THETA);
+    }
+
+    /// The SmolVLM-256M wrapper shape: the trunk is read out of `text_config`,
+    /// and any other wrapper with a llama `text_config` is still refused.
+    #[test]
+    fn only_the_idefics3_wrappers_read_their_trunk_from_text_config() {
+        let trunk: serde_json::Value = serde_json::from_str(LLAMA32_1B).unwrap();
+        let wrap = |model_type: &str| {
+            serde_json::json!({
+                "model_type": model_type,
+                "text_config": trunk,
+                "vision_config": {},
+            })
+            .to_string()
+        };
+        let flat = parse_llama_config(LLAMA32_1B).unwrap();
+        for wrapper in ["idefics3", "smolvlm"] {
+            assert_eq!(parse_llama_config(&wrap(wrapper)).unwrap(), flat);
+        }
+        let e = parse_llama_config(&wrap("llava")).unwrap_err().to_string();
+        assert!(e.contains("llava"), "{e}");
     }
 }

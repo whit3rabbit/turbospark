@@ -443,6 +443,9 @@ impl ChatDialect {
     }
 }
 
+const END_OF_UTTERANCE_MARK: &str = "<end_of_utterance>";
+const FAKE_IMAGE_MARK: &str = "<fake_token_around_image>";
+
 /// Tokenizer wrapper combining Hugging Face's `tokenizers` backend with
 /// chat dialect detection, special token ID mapping, and Jinja chat templates.
 pub struct MfTokenizer {
@@ -549,6 +552,19 @@ impl MfTokenizer {
                 .copied()
                 .filter(|&id| id >= 0 && (id as usize) < resolved.vocab_size),
         );
+        // The Idefics3 / SmolVLM turns end with `<end_of_utterance>`, which
+        // their upstream PROCESSOR adds as a stop token: no sidecar of
+        // theirs lists it as an EOS. Keyed on the template writing it AND the
+        // family's own image-padding token being in the table.
+        if chat_template_source
+            .as_deref()
+            .is_some_and(|t| t.contains(END_OF_UTTERANCE_MARK))
+            && tokenizer.token_to_id(FAKE_IMAGE_MARK).is_some()
+        {
+            if let Some(id) = tokenizer.token_to_id(END_OF_UTTERANCE_MARK) {
+                resolved.stop_token_ids.insert(id as i32);
+            }
+        }
         Ok(Self {
             dialect,
             bos_id: resolved.bos_id,

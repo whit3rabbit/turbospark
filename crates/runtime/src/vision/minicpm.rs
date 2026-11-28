@@ -1,4 +1,5 @@
-//! The MiniCPM-V 4.7 vision tower on Metal (`docs/MINICPMV_VISION_PHASE0.md`).
+//! The MiniCPM-V 4.6 / 4.7 vision tower on Metal
+//! (`docs/MINICPMV_VISION_PHASE0.md`).
 //!
 //! A SigLIP encoder (27 pre-LayerNorm blocks, tanh GELU, bidirectional
 //! attention over the whole image, no rope) with two merges folded in:
@@ -9,7 +10,7 @@
 //! x = vit_merger(x)         # 2x2 windows: attn over 4 tokens + MLP + window mean
 //! blocks 7..=26             # on a quarter of the tokens
 //! x = post_layernorm(x)
-//! out = merger(x)           # 2x2 groups of 1152 -> LN(4608) -> 4608 -> gelu -> 2048
+//! out = merger(x)           # 2x2 groups of 1152 -> LN(4608) -> 4608 -> gelu -> trunk width
 //! ```
 //!
 //! # The token order is a HOST permutation
@@ -37,7 +38,9 @@
 use std::path::Path;
 
 use model_io::{ArchConfig, ResidentIndex, VisionConfig, VisionTowerKind};
-use turbospark_vision_io::{GridThw, PreprocessParams, PreprocessedImage};
+use turbospark_vision_io::{
+    GridThw, MiniCpmIds, MiniCpmPositions, PreprocessParams, PreprocessedImage,
+};
 
 use super::weights::{fp16_view, VISION_PREFIX};
 use super::{VisionEmbedding, VisionStages, VISION_SLOTS};
@@ -97,6 +100,21 @@ const ALL_ROLES: [R; 16] = [
     R::Fc2B,
 ];
 
+/// The splice ids and position rule a `minicpm_v` or `minicpm_v46` install
+/// uses.
+pub(crate) fn ids_for(v: &VisionConfig) -> MiniCpmIds {
+    MiniCpmIds::new(
+        v.image_token_id as i32,
+        v.vision_start_token_id as i32,
+        v.vision_end_token_id as i32,
+        if v.tower == VisionTowerKind::MiniCpmV46 {
+            MiniCpmPositions::Sequential
+        } else {
+            MiniCpmPositions::Canvas
+        },
+    )
+}
+
 /// The tower's geometry, resolved once from the install's [`VisionConfig`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct MiniCpmDims {
@@ -114,7 +132,7 @@ pub(crate) struct MiniCpmDims {
 
 impl MiniCpmDims {
     pub(crate) fn resolve(v: &VisionConfig) -> Result<Self, RealForwardError> {
-        if v.tower != VisionTowerKind::MiniCpmV || !v.is_active() {
+        if !v.tower.is_minicpm_v() || !v.is_active() {
             return Err(RealForwardError::Unsupported(format!(
                 "not an active minicpm_v vision tower (kind {})",
                 v.tower.as_str()
@@ -1081,6 +1099,22 @@ mod tests {
             [0, 1, 2, 3].map(window_origin),
             [(0, 0), (0, 2), (2, 0), (2, 2)]
         );
+    }
+
+    #[test]
+    fn the_tower_kind_picks_the_position_rule() {
+        let mut v = VisionConfig {
+            image_token_id: 1,
+            vision_start_token_id: 2,
+            vision_end_token_id: 3,
+            ..VisionConfig::NONE
+        };
+        v.tower = VisionTowerKind::MiniCpmV46;
+        let ids = ids_for(&v);
+        assert_eq!(ids.positions, MiniCpmPositions::Sequential);
+        assert_eq!((ids.image_pad, ids.image_start, ids.image_end), (1, 2, 3));
+        v.tower = VisionTowerKind::MiniCpmV;
+        assert_eq!(ids_for(&v).positions, MiniCpmPositions::Canvas);
     }
 
     #[test]

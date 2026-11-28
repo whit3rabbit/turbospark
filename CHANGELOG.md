@@ -14,6 +14,10 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- MiniCPM-V 4.6 image input intake (`minicpmv4_6`, dense Qwen3.5 trunk, new
+  `minicpm_v46` tower kind with sequential positions), combined installs from
+  MLX-quantized conversions only. Smoked once on the 4-bit build. See
+  `docs/MINICPMV_VISION_PHASE0.md`.
 - Server: llama.cpp-style `timings` and `usage.prompt_tokens_details.cached_tokens`
   on chat completion and completion responses, and `turbospark_text_*` series on
   `GET /v1/metrics`, which every server now serves behind the usual auth.

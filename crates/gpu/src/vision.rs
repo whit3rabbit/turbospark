@@ -533,6 +533,35 @@ pub fn encode_vision_residual_add(
     Ok(())
 }
 
+/// `y += x * s` over `count` FP16 values, where `s` is one `[width]` FP16 row
+/// applied per channel across `rows = count / width` rows: the InternViT
+/// tower's layer scale (`ls1` / `ls2`), fused with the residual add. The
+/// fused form and its reason live beside the kernel in `vision.metal`.
+pub fn encode_vision_residual_scaled_add(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    y: (&metal::Buffer, u64),
+    x: (&metal::Buffer, u64),
+    s: (&metal::Buffer, u64),
+    width: u32,
+    count: u32,
+) -> Result<(), GpuError> {
+    let pipeline = context.pipeline(
+        SOURCE,
+        "vision_residual_scaled_add_fp16",
+        &no_function_constants(),
+        b"",
+    )?;
+    pass.encode_threadgroups(
+        &pipeline,
+        &[(y.0, 0, y.1), (x.0, 1, x.1), (s.0, 2, s.1)],
+        &[(u32_bytes(&width), 3), (u32_bytes(&count), 4)],
+        groups_for(count),
+        THREADS_PER_GROUP,
+    );
+    Ok(())
+}
+
 /// RMSNorm over `rows` rows of `d` FP16 elements, the Gemma 4 tower's norm:
 /// `x * rsqrt(mean(x^2) + eps) * weight`, the weight applied directly, or
 /// no weight at all when `weight` is `None` (the v norm and the projector's

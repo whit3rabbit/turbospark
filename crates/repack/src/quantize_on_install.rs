@@ -98,6 +98,16 @@ pub fn family_admits_quantize_on_install(family: ModelFamily) -> bool {
 ///   INT8 router are not synthesized for Gemma4;
 /// - the `gemma4_unified` root (12B), whose HF layout was not read.
 pub fn quantize_refusal(family: ModelFamily, config: &serde_json::Value) -> Option<String> {
+    if config.get("model_type").and_then(|v| v.as_str()) == Some("minicpmv4_6") {
+        // The upstream BF16 repo spells the tower `model.vision_tower.*` with
+        // a channels-first patch embedding, neither of which the walk reads,
+        // and no BF16 conversion of this wrapper was ever quantized here.
+        return Some(
+            "quantize-on-install is not wired for the minicpmv4_6 wrapper; use a 4-bit or \
+             8-bit MLX conversion (mlx-community/MiniCPM-V-4.6-4bit)"
+                .into(),
+        );
+    }
     if family == ModelFamily::MuseGlimmer {
         // The family string also reaches the DFlash drafter
         // (`Muse-Glimmer-30B-assistant`) and any wrapper; only the plain
@@ -108,6 +118,20 @@ pub fn quantize_refusal(family: ModelFamily, config: &serde_json::Value) -> Opti
                 "quantize-on-install is verified for model_type muse_glimmer only, not {}",
                 root.unwrap_or_default()
             ));
+        }
+        return None;
+    }
+    if family == ModelFamily::Llama {
+        // The Idefics3 / SmolVLM wrappers install pre-quantized only: their
+        // trunk spelling and tower were never run through quantize-on-install
+        // (`docs/IDEFICS3_VISION_PHASE0.md`).
+        let root = config.get("model_type").and_then(|v| v.as_str());
+        if matches!(root, Some("idefics3") | Some("smolvlm")) {
+            return Some(
+                "quantize-on-install is not wired for the idefics3 / smolvlm wrappers; use a \
+                 4-bit or 8-bit MLX conversion"
+                    .into(),
+            );
         }
         return None;
     }

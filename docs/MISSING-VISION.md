@@ -41,7 +41,9 @@ lists its limits.
   `crates/runtime` (`vision/`, `families/`, `real_forward_vision_api.rs`) and
   `docs/`. Nothing was executed.
 - **Spot checks.** Before merging, the key claims were checked against source:
-  no `internvl` anywhere in the crates; `llava_next` refused in
+  no `internvl` anywhere in the crates (stale 2026-11-27: the tower landed,
+  see [docs/INTERNVL_VISION_PHASE0.md](INTERNVL_VISION_PHASE0.md));
+  `llava_next` refused in
   `vision_clip.rs`; the `minicpmv4_7` gate in `arch_registry.rs` and
   `qwen36_config.rs`; `gemma4_unified` registered in `arch_registry.rs`; and
   `lfm3_vl` read by `gemma4_checkpoint/vision_lfm3.rs`. All matched.
@@ -54,38 +56,41 @@ lists its limits.
 |---|---|---:|---:|---:|---:|---:|---:|
 | 1 | Qwen-VL lineage | 9 | 6 | 0 | 1 | 1 | 1 |
 | 2 | Gemma and PaliGemma | 5 | 1 | 0 | 2 | 2 | 0 |
-| 3 | LLaVA, Idefics, SmolVLM, Llama vision | 11 | 2 | 0 | 5 | 2 | 2 |
-| 4 | InternVL, Phi, Granite, Aya, Nemotron | 12 | 0 | 0 | 2 | 10 | 0 |
+| 3 | LLaVA, Idefics, SmolVLM, Llama vision | 11 | 3 (+1) | 0 | 3 | 2 | 2 |
+| 4 | InternVL, Phi, Granite, Aya, Nemotron | 12 | 1 | 1 | 0 | 10 | 0 |
 | 5 | Mistral and Pixtral | 6 | 1 | 1 | 0 | 4 | 0 |
 | 6 | DeepSeek, Janus, Unlimited OCR | 7 | 2 (+1 unverified) | 0 | 2 | 2 | 0 |
 | 7 | OCR and document parsers | 11 | 0 | 1 | 4 | 4 | 2 |
-| 8 | MiniCPM, MoonDream, Molmo, Jina, FastVLM | 10 | 1 | 1 | 1 | 7 | 0 |
+| 8 | MiniCPM, MoonDream, Molmo, Jina, FastVLM | 10 | 2 | 0 | 1 | 7 | 0 |
 | 9 | Chinese and other lab VLMs | 16 | 0 | 0 | 4 | 12 | 0 |
 | 10 | LFM, Inkling, Muse, D1 | 9 | 2 | 1 | 1 | 5 | 0 |
 | 11 | Vision-only and image generation | 31 | 0 | 1 | 0 | 1 | 29 |
-| | **Total** | **127** | **15 (+1)** | **5** | **22** | **50** | **34** |
+| | **Total** | **127** | **18 (+2)** | **5** | **19** | **50** | **34** |
 
 Of the 127 directories, 93 are image-to-text models in scope (127 minus 34
-out-of-scope). Of those 93: 15 are supported (plus 1 unverified), 5 are
-tower-only, 22 are family-only, and 50 are missing.
+out-of-scope). Of those 93: 17 are supported (plus 2 unverified), 4 are
+tower-only, 20 are family-only, and 50 are missing.
 
-Two notes on the table. The `internvl` and `internvl_chat` rows count as
-family-only only because their text configs point at Qwen3 and Qwen2. Their
-wrapper types are not registered, so the text path does not run end to end
-today. Treat them as missing until intake is traced. Also, the `supported`
-count includes the sidecar-only rows.
+Two notes on the table. The `internvl` and `internvl_chat` wrappers counted
+family-only when this audit was written (2026-11-25); as of 2026-11-27
+`internvl_chat` is supported and real-gated and `internvl` is tower-only,
+with the wrapper strings deliberately ABSENT from `SUPPORTED_HF` because an
+InternVL checkpoint's trunk is whatever `text_config.model_type` says (see
+[docs/INTERNVL_VISION_PHASE0.md](INTERNVL_VISION_PHASE0.md)). Also, the
+`supported` count includes the sidecar-only rows.
 
 ## Where to start
 
 Ordered by the effort estimates in the group sections.
 
 - **Small, close to done.** `lfm3_omni` image path (registry row and config
-  reader). `minicpmv4_6` gating on a dense checkpoint. `internvl_chat` once
-  `internvl` lands. Close the `unlimited_ocr` verification gap.
+  reader). `minicpmv4_6` real-weights gate (wired 2026-11-27). `internvl_chat`
+  (DONE 2026-11-27). Close the `unlimited_ocr` verification gap.
 - **Medium, reuses a tower we have.** `llava_next` (CLIP tower plus the anyres
   code in `vision-io/src/onevision.rs`). `idefics3` and `smolvlm` (one
-  variable-size SigLIP port covers both). `qwen2_vl` (the Qwen2.5-VL pipeline
-  with LayerNorm blocks). `mistral3` (the Pixtral tower plus the 2x2 merger).
+  variable-size SigLIP port covers both; implemented 2026-11-27, real gate
+  owed). `qwen2_vl` (the Qwen2.5-VL pipeline
+  with LayerNorm blocks; DONE 2026-11-27). `mistral3` (the Pixtral tower plus the 2x2 merger).
   `gemma4_unified` (the Gemma 4 trunk plus an encoder-free embedder).
   `mage_vl` (Qwen3 text already runs). `multi_modality` (Janus).
   `deepseekocr_2`. `minicpm_ocr` gate. `indic_ocr` block-OCR checkpoint.
@@ -98,16 +103,22 @@ Ordered by the effort estimates in the group sections.
 
 - **Shallow pass, group 4.** The "no matching tower" verdicts rest on the
   `VisionTowerKind` doc comments and repo-wide searches. The dispatch in
-  `real_forward_vision_api.rs` and the tower files were not read.
-- **`internvl`, `internvl_chat`.** Wrapper types unregistered (see the note
-  above).
+  `real_forward_vision_api.rs` and the tower files were not read. RESOLVED
+  2026-11-27 for the internvl pair (both the dispatch and the tower are now
+  this port's own code); the Phi, Granite, Aya and RADIO verdicts still
+  rest on the doc comments.
+- **`internvl`, `internvl_chat`.** RESOLVED 2026-11-27: one InternViT tower
+  serves both wrappers (`VisionTowerKind::InternViT`), with no SUPPORTED_HF
+  wrapper rows by design (see the note above and
+  [docs/INTERNVL_VISION_PHASE0.md](INTERNVL_VISION_PHASE0.md)).
 - **`llava_bunny`.** The HF `model_type` spelling and text backbone are not
   verified.
 - **`lfm3_vl`.** No `lfm3_vl` row in `arch_registry.rs`, but
   `gemma4_checkpoint/vision_lfm3.rs` reads it. The resolver was not traced. The
   supported verdict rests on `docs/LFM3_VL_VISION_PHASE0.md` and a real-model
   test.
-- **`minicpmv4_6`, `fastvlm`.** Source reads only. The `llava_qwen2` registry
+- **`minicpmv4_6`.** Wired 2026-11-27; no real weights run.
+- **`fastvlm`.** Source reads only. The `llava_qwen2` registry
   fallthrough for `fastvlm` was not tested.
 - **`dots_ocr`, `oxr`.** The Qwen2 and Qwen3 trunk fit was judged from mlx-vlm
   imports, not from a config comparison.
@@ -127,11 +138,11 @@ Ordered by the effort estimates in the group sections.
 
 ## 1. Qwen-VL lineage
 
-Summary: 6 supported (qwen2_5_vl, qwen3_vl, qwen3_vl_moe with caveat, qwen3_5, qwen3_5_moe, qwen4_exp with caveat), 1 family-only (qwen2_vl), 1 missing (qwen3_omni_moe), 1 out-of-scope (qwen3_vl_embedding). No row is tower-only. Evidence is from docs (MODEL_FAMILY.md vision table, per-tower Phase 0 pages) and registry/enum source; no real-weight gate was re-run by this audit.
+Summary: 7 supported (qwen2_vl, qwen2_5_vl, qwen3_vl, qwen3_vl_moe with caveat, qwen3_5, qwen3_5_moe, qwen4_exp with caveat), 1 missing (qwen3_omni_moe), 1 out-of-scope (qwen3_vl_embedding). No row is tower-only or family-only. Evidence is from docs (MODEL_FAMILY.md vision table, per-tower Phase 0 pages) and registry/enum source; no real-weight gate was re-run by this audit.
 
 | mlx-vlm dir | HF model_type | mlx-vlm vision file | TurboSpark text family | TurboSpark vision tower | Status | Files to read |
 |---|---|---|---|---|---|---|
-| qwen2_vl | qwen2_vl | [vision.py](https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/qwen2_vl/vision.py) | Qwen2Dense runs the trunk, but `qwen2_vl` has no registry row (only `qwen2`, `qwen2_5_vl`) | none (`Qwen25Vl` is RMSNorm + gated SiLU + windowed; Qwen2-VL is LayerNorm blocks, no windows) | family-only | ../crates/repack/src/arch_registry.rs, ../crates/repack/src/qwen36_config.rs, ../docs/QWEN25_VL_VISION_PHASE0.md |
+| qwen2_vl | qwen2_vl | [vision.py](https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/qwen2_vl/vision.py) | Qwen2Dense (registry row, exact equality beside `qwen2` and `qwen2_5_vl`) | `Qwen2Vl` (runtime/vision/qwen2.rs: LayerNorm blocks, plain quick-GELU MLP, full attention on every block, LayerNorm merger `ln_q`) | supported (2026-11-27, 2B combined install; text and image smokes; no tower-stage parity probe) | ../docs/QWEN2VL_VISION_PHASE0.md, ../crates/repack/src/qwen36_config.rs, ../crates/runtime/src/vision/qwen2.rs |
 | qwen2_5_vl | qwen2_5_vl | [vision.py](https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/qwen2_5_vl/vision.py) | Qwen2Dense (registry row line 300) | `Qwen25Vl` (runtime/vision/qwen25.rs) | supported | ../docs/QWEN25_VL_VISION_PHASE0.md, ../docs/MODEL_FAMILY.md (7B 4-bit combined install gated 2026-11-01; tower numpy parity, mlx-vlm not executed) |
 | qwen3_vl | qwen3_vl | [vision.py](https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/qwen3_vl/vision.py) | Qwen3Vl (rows `qwen3_vl`, `qwen3_vl_text`) | `QwenSiglip` + 3 deepstack mergers | supported | ../docs/QWEN3VL_PHASE0.md (4B real install, 7 tower stages cosine 0.99999+ vs mlx-vlm), ../crates/runtime/tests/qwen3vl_vision.rs |
 | qwen3_vl_moe | qwen3_vl_moe | [vision.py](https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/qwen3_vl_moe/vision.py) | Qwen3Moe (rows exist, but HF safetensors trunk has no writer; runs from GGUF `qwen3vlmoe`) | `QwenSiglip` + deepstack (depth 27, blocks 8/16/24), sidecar via `pull-vision` | supported (GGUF trunk + sidecar only; tower not re-measured on this checkpoint) | ../docs/MODEL_FAMILY.md (line 404, real-gated 2026-11-01), ../crates/repack/src/arch_registry.rs |
@@ -143,7 +154,7 @@ Summary: 6 supported (qwen2_5_vl, qwen3_vl, qwen3_vl_moe with caveat, qwen3_5, q
 
 ### Gaps
 
-- qwen2_vl: both halves partly missing. Text trunk is a plain Qwen2 and Qwen2Dense would run it, but the `qwen2_vl` HF model_type is not registered and the config reader only special-cases `qwen2_5_vl`. The tower is not covered: Qwen2-VL uses LayerNorm blocks and full attention on every block (no windows), unlike `Qwen25Vl`. Port from https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/qwen2_vl/vision.py. Extend ../crates/model-io/src/arch_config/sub_configs.rs (new `VisionTowerKind`), ../crates/repack/src/arch_registry.rs, ../crates/repack/src/qwen36_config.rs, ../crates/runtime/src/vision/qwen25.rs (sibling module), ../crates/runtime/src/real_forward_vision_api.rs. Effort M: reuses Qwen2.5-VL patchify, 2-D rope and mRoPE trunk; only block norms and MLP differ.
+- qwen2_vl: DONE 2026-11-27 (was: both halves partly missing). The tower landed as `VisionTowerKind::Qwen2Vl` over the Qwen2Dense trunk (`docs/QWEN2VL_VISION_PHASE0.md`), reusing the 2.5 pipeline's patchify, 2-D rope and chunked mRoPE; the block deltas are LayerNorm norms with biases, a plain two-layer quick-GELU MLP, and full attention on every block. Remaining gap: no tower-stage parity probe against a transcription reference (the end-to-end image gate passed even under a wrong mRoPE selector, so it does not pin that seam; see the honest note in the Phase 0 page).
 - qwen3_vl_moe: the vision half is gated, but the trunk only runs from the official GGUF plus a `pull-vision` sidecar. An MLX/HF safetensors `qwen3_vl_moe` checkpoint cannot be installed combined (no safetensors writer for routed experts on the llama MoE flow), and the tower was not re-measured against a reference here. Source: https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/qwen3_vl_moe/vision.py. Extend ../crates/repack/src/arch_registry.rs and the Qwen3Moe repack path. Effort M: expert-weight safetensors writer, chunked-prefill image injection.
 - qwen3_vl_embedding: not a generation VLM, so out of scope for this audit. If wanted, add a multimodal embedding head (last-token pooling, normalize, no lm_head) over the existing Qwen3Vl trunk and tower. Source: https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/qwen3_vl_embedding/qwen3_vl_embedding.py. Files: ../crates/embeddings/src/lib.rs, ../crates/runtime/src/real_forward_vision_api.rs. Effort M: pooling head and prompt template, but needs a vision-conditioned hidden-state export.
 - qwen3_omni_moe: neither half. Needs a Qwen3 MoE thinker family row (qwen3_omni_moe thinker config nesting), the audio encoder, and optionally the talker/code2wav speech path; vision itself is the Qwen3-VL-MoE tower with deepstack. Source: https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/qwen3_omni_moe/vision.py (plus thinker.py, audio.py). Extend ../crates/repack/src/arch_registry.rs, ../crates/repack/src/qwen3vl_config.rs, ../crates/runtime/src/vision/mod.rs. Effort L: thinker-only image support is M, but audio/talker make the full model L.
@@ -170,7 +181,7 @@ Summary: 5 dirs: 1 supported (gemma4), 2 family-only (gemma3, gemma4_unified), 2
 
 ## 3. LLaVA, Idefics, SmolVLM, Llama vision
 
-Summary: 11 dirs: supported 2 (llava, llava_onevision, both only as GGUF trunk plus vision sidecar), family-only 5 (llava_next, llava_bunny, idefics2, idefics3, smolvlm), missing 2 (mllama, llama4), out-of-scope 2 (colidefics3, llama_nemotron_vl_embedding).
+Summary: 11 dirs: supported 3 (llava, llava_onevision, both only as GGUF trunk plus vision sidecar, and smolvlm), supported-unverified 1 (idefics3: same port, the 8B not run), family-only 3 (llava_next, llava_bunny, idefics2), missing 2 (mllama, llama4), out-of-scope 2 (colidefics3, llama_nemotron_vl_embedding).
 
 | mlx-vlm dir | HF model_type | mlx-vlm vision file | TurboSpark text family | TurboSpark vision tower | Status | Files to read |
 |---|---|---|---|---|---|---|
@@ -181,8 +192,8 @@ Summary: 11 dirs: supported 2 (llava, llava_onevision, both only as GGUF trunk p
 | mllama | mllama | mllama/vision.py | Llama family exists, but no gated cross-attention layers | none | missing | ../crates/runtime/src/families/llama |
 | llama4 | llama4 | llama4/vision.py | none runnable (PLANNED_GGUF llama4, refused: expert slot cache 58.4 GiB) | none | missing | ../crates/repack/src/arch_registry.rs |
 | idefics2 | idefics2 (text mistral) | idefics2/vision.py (NaViT SigLIP + perceiver) | Llama (mistral row, GGUF only) | none (SigLip tower is fixed 384 so400m; no perceiver resampler) | family-only | ../crates/runtime/src/vision/siglip.rs |
-| idefics3 | idefics3 (text llama) | idefics3/vision.py (SigLIP, variable size) | Llama (GGUF only) | none (no pixel-shuffle connector, no tile splitting) | family-only | ../crates/runtime/src/vision/siglip.rs |
-| smolvlm | smolvlm (idefics3 subclass) | reuses idefics3/vision.py | Llama (SmolLM2, GGUF only) | none | family-only | same as idefics3 |
+| idefics3 | idefics3 (text llama) | idefics3/vision.py (SigLIP, variable size) | Llama (MLX safetensors, wrapper only) | `VisionTowerKind::SigLipNaViT`, runtime/vision/idefics3.rs | supported-unverified (same port as smolvlm; the 8B not run; [IDEFICS3_VISION_PHASE0.md](IDEFICS3_VISION_PHASE0.md)) | ../crates/runtime/src/vision/idefics3.rs |
+| smolvlm | smolvlm (idefics3 subclass) | reuses idefics3/vision.py | Llama (SmolLM2, MLX safetensors) | shared with idefics3 | supported (one smoke on SmolVLM-256M 4-bit, 2026-11-27; same record) | same as idefics3 |
 | colidefics3 | colidefics3 | reuses idefics3 | n/a | n/a | out-of-scope: ColBERT-style multi-vector retrieval, no generation | n/a |
 | llama_nemotron_vl_embedding | llama_nemotron_vl_embedding | granite_vision/vision.py | n/a | n/a | out-of-scope: pooled embedding model, no generation | n/a |
 
@@ -191,20 +202,20 @@ Summary: 11 dirs: supported 2 (llava, llava_onevision, both only as GGUF trunk p
 - llava_next: tower exists, anyres missing. The CLIP reader hard-refuses llava_next and has no grid-pinpoint tiling. Port from https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/llava_next/llava_next.py and https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/llava_next/vision.py. Extend ../crates/repack/src/gemma4_checkpoint/vision_clip.rs, ../crates/vision-io/src/clip.rs (reuse the anyres code in ../crates/vision-io/src/onevision.rs), ../crates/runtime/src/vision/clip.rs. Effort M: reuse of existing CLIP tower and anyres packing, but 1.6 packs differ (unpad, image_newline).
 - llava_bunny: SigLIP tower variant and its own projector. Port from https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/llava_bunny/vision.py and llava_bunny.py. Extend ../crates/runtime/src/vision/siglip.rs and ../crates/repack/src/gemma4_checkpoint/vision.rs. Effort M. The model_type spelling and text backbone were not verified.
 - idefics2: needs a variable-size SigLIP (NaViT bucketed positions) plus perceiver resampler. Port from https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/idefics2/vision.py. Extend ../crates/runtime/src/vision/ (new module), ../crates/vision-io/src/ (new preprocessing), ../crates/model-io/src/arch_config/sub_configs.rs (new VisionTowerKind). Effort L: new tower plus resampler, and the trunk is GGUF only.
-- idefics3 and smolvlm: variable-size SigLIP, pixel-shuffle connector, tile splitting with row/col tokens. Port from https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/idefics3/vision.py (smolvlm reuses it, config https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/smolvlm/config.py). Extend ../crates/runtime/src/vision/siglip.rs, ../crates/vision-io/src/, ../crates/model-io/src/arch_config/sub_configs.rs. Effort M: tower close to existing SigLIP, new tiling and shuffle; one port covers both dirs.
+- idefics3 and smolvlm: IMPLEMENTED (2026-11-27), one port for both ([IDEFICS3_VISION_PHASE0.md](IDEFICS3_VISION_PHASE0.md)). Smoked on SmolVLM-256M only. Still owed: an Idefics3-8B run, processor pixel parity, a tower-stage comparison, the server splice and a vision sidecar. SmolVLM2 video is not covered.
 - mllama: needs gated cross-attention decoder layers (new text flow) and a two-stage tiled vision encoder. Port from https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/mllama/language.py and vision.py. Extend ../crates/runtime/src/families/ and ../crates/runtime/src/vision/. Effort L: cross-attention KV is a new cache concept.
 - llama4: refused text (large MoE streaming, chunked attention, rope scaling) and no tower. Port from https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/llama4/language.py and vision.py. Extend ../crates/repack/src/arch_registry.rs, ../crates/runtime/src/families/. Effort L (both halves, plus slot-cache memory blocker).
-- Cross-cutting note: llava and llava_onevision work only as GGUF trunk plus pull-vision sidecar. An HF safetensors/MLX install of either is not supported. The text family for idefics/smolvlm is the same Llama GGUF-only path.
+- Cross-cutting note: llava and llava_onevision work only as GGUF trunk plus pull-vision sidecar. An HF safetensors/MLX install of either is not supported. idefics2 still has only the GGUF text path; idefics3 and smolvlm install their MLX conversions.
 - Not checked: whether PLANNED/SUPPORTED_GGUF has per-arch rows for the idefics text backbones beyond llama/mistral; llava_bunny backbone.
 
 ## 4. InternVL, Phi, Granite, Aya, Nemotron
 
-Summary: 12 dirs checked: 0 supported, 0 tower-only, 2 family-only (internvl, internvl_chat), 10 missing, 0 out-of-scope. Text-family evidence is from `SUPPORTED_HF` / `SUPPORTED_GGUF` in `crates/repack/src/arch_registry.rs`; no vision tower kind in `VisionTowerKind` (`crates/model-io/src/arch_config/sub_configs.rs`) matches any InternViT, Phi, Granite, Aya or RADIO tower, and `st` finds no docs or runtime code naming any of these (the only hits are audio models and `docs/MODEL_COVERAGE.md` listing `nemotron_h` as planned).
+Summary: 12 dirs checked: 1 supported (internvl_chat), 1 tower-only (internvl), 0 family-only, 10 missing, 0 out-of-scope. Text-family evidence is from `SUPPORTED_HF` / `SUPPORTED_GGUF` in `crates/repack/src/arch_registry.rs`; no vision tower kind in `VisionTowerKind` (`crates/model-io/src/arch_config/sub_configs.rs`) matches any Phi, Granite, Aya or RADIO tower, and `st` finds no docs or runtime code naming any of these (the only hits are audio models and `docs/MODEL_COVERAGE.md` listing `nemotron_h` as planned). The InternViT gap closed 2026-11-27 ([docs/INTERNVL_VISION_PHASE0.md](INTERNVL_VISION_PHASE0.md)).
 
 | mlx-vlm dir | HF model_type | mlx-vlm vision file | TurboSpark text family | TurboSpark vision tower | Status | Files to read |
 |---|---|---|---|---|---|---|
-| internvl | internvl (text: qwen3, per `from ..qwen3.language import LanguageModel`) | internvl/vision.py (InternViT: patch embed, cls, learned pos, layer scale) | Qwen3Dense via HF `qwen3`, but wrapper type `internvl` unregistered | none (no InternViT kind) | family-only | [crates/repack/src/arch_registry.rs](../crates/repack/src/arch_registry.rs), [crates/model-io/src/arch_config/sub_configs.rs](../crates/model-io/src/arch_config/sub_configs.rs) |
-| internvl_chat | internvl_chat (text: qwen2 per language.py) | internvl_chat/vision.py | Qwen2Dense via HF `qwen2`, wrapper `internvl_chat` unregistered | none | family-only | same as above |
+| internvl | internvl (text: qwen3, per `from ..qwen3.language import LanguageModel`) | internvl/vision.py (InternViT: patch embed, cls, learned pos, layer scale) | Qwen3Dense via HF `qwen3` (resolved through `text_config.model_type`; the wrapper has deliberately NO SUPPORTED_HF row, and `parse_qwen3_config` accepts the wrapper's `text_config` only under root `internvl`) | `VisionTowerKind::InternViT`, runtime/vision/internvl.rs | tower-only (config path verified: probe of `mlx-community/InternVL3_5-1B-4bit@f9d179a8` declares internvl, family qwen3, then refuses at the existing group-32 kernel gate; the only published plain-flavor MLX conversion, so no install gate) | [docs/INTERNVL_VISION_PHASE0.md](../docs/INTERNVL_VISION_PHASE0.md), [crates/repack/src/gemma4_checkpoint/vision_internvl.rs](../crates/repack/src/gemma4_checkpoint/vision_internvl.rs) |
+| internvl_chat | internvl_chat (text: qwen2 per language.py) | internvl_chat/vision.py | Qwen2Dense via HF `qwen2` (same wrapper-row policy) | `VisionTowerKind::InternViT`, runtime/vision/internvl.rs | supported (real-gated 2026-11-27 on `mlx-community/InternVL3-1B-4bit@7927bb6b`: probe, streamed install with the 24-block tower, greedy text smoke, page transcription with a no-image control, re-run 2026-11-27 after a projector buffer-overflow fix: a large-text page reads exactly, a dense page drifts into repetition; [docs/INTERNVL_VISION_PHASE0.md](../docs/INTERNVL_VISION_PHASE0.md)). Limits: combined install only, no tower-stage parity probe, no quality gate or memory oracle, no server/FFI run, the chat template is text-only so image turns flatten parts to `<img>` markers | ../docs/INTERNVL_VISION_PHASE0.md, ../crates/repack/src/gemma4_checkpoint/vision_internvl.rs, ../crates/runtime/src/vision/internvl.rs, ../crates/vision-io/src/internvl.rs |
 | phi3_v | phi3_v | phi3_v/vision.py (CLIP ViT-L/336 + HD transform) | GGUF `phi3` -> Llama only; no HF `phi3` row | `Clip` kind is LLaVA-1.5 specific (penultimate layer, 577 pos); no HD/sub-image glue | missing | [crates/repack/src/arch_registry.rs](../crates/repack/src/arch_registry.rs), [docs/LLAVA_VISION_PHASE0.md](../docs/LLAVA_VISION_PHASE0.md) |
 | phi4mm | phi4mm | phi4mm/vision.py (SigLIP2) | no HF `phi4mm`; Phi3-style trunk with LoRA adapters | none (SigLIP2 NaFlex absent) | missing | [crates/repack/src/arch_registry.rs](../crates/repack/src/arch_registry.rs) |
 | phi4_siglip | phi4-siglip | phi4_siglip/vision.py (SigLIP2) | no HF row (Phi3 class in language.py) | none | missing | [crates/repack/src/arch_registry.rs](../crates/repack/src/arch_registry.rs) |
@@ -216,12 +227,12 @@ Summary: 12 dirs checked: 0 supported, 0 tower-only, 2 family-only (internvl, in
 | nemotron_parse | nemotron_parse | nemotron_parse/vision.py (RADIO + neck) | none (mBART-style encoder-decoder, no family) | none | missing | [crates/runtime/src/families](../crates/runtime/src/families)/ |
 | nemotron_parse_v3_5 | nemotron_parse_v3_5 | nemotron_parse_v3_5/vision.py (subclass of RadioVisionModel) | none | none | missing | same as nemotron_parse |
 
-Counts (authoritative): family-only 2, missing 10, supported 0, supported-unverified 0, tower-only 0, out-of-scope 0. nemotron_parse (both) is an OCR parser with a document-token decoder; it is still image-to-text, so it is classed missing, not out-of-scope.
+Counts (authoritative): family-only 0, missing 10, supported 1, supported-unverified 0, tower-only 1, out-of-scope 0. nemotron_parse (both) is an OCR parser with a document-token decoder; it is still image-to-text, so it is classed missing, not out-of-scope.
 
 ### Gaps
 
-- internvl: vision tower missing; text runs only if the wrapper type is mapped (add `internvl` in `SUPPORTED_HF` and read `text_config` as Qwen3). Port from https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/internvl/vision.py (InternViT with layer scale, pixel shuffle in internvl.py). Extend ../crates/model-io/src/arch_config/sub_configs.rs (new `VisionTowerKind`), ../crates/repack/src/arch_registry.rs, ../crates/runtime/src/vision/ (new tower), ../crates/vision-io/src/ (dynamic tiling), ../crates/runtime/src/real_forward_vision_api.rs. Effort M: tower is plain ViT, but tiling and pixel shuffle need parity work.
-- internvl_chat: same as internvl, text is Qwen2. Source https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/internvl_chat/vision.py. Share one InternViT tower with internvl. Effort S after internvl lands.
+- internvl: TOWER AND TEXT PATH DONE (2026-11-27), shared with internvl_chat; see [docs/INTERNVL_VISION_PHASE0.md](../docs/INTERNVL_VISION_PHASE0.md). The wrapper has NO SUPPORTED_HF row on purpose: an InternVL checkpoint's trunk is whatever `text_config.model_type` says, and a wrapper row would resolve a config whose trunk the registry does not know (`internlm2` and friends) into Qwen. Still missing: a real install gate (the only published plain-flavor MLX conversion quantizes 4-bit at group 32, which the kernels refuse) and a tower-stage parity probe.
+- internvl_chat: DONE (2026-11-27). One InternViT tower shared with internvl, wired end to end (two tensor flavors in one reader, fused qkv at repack for the plain one, layer-scale kernel, dynamic tiling, pixel shuffle, flat injection through `set_prompt_vision_flat`) and real-gated on `InternVL3-1B-4bit`. Still owed: a quality gate, a memory oracle, and a server/FFI run.
 - phi3_v: both missing. Source https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/phi3_v/vision.py (CLIP with HD transform and sub-image newline embeddings). Text: add HF `phi3` to ../crates/repack/src/arch_registry.rs (GGUF path exists with LongRoPE per `derive_phi3_extensions`). Tower: reuse ../crates/runtime/src/vision/clip.rs only after a feature-layer and HD-glue change. Effort L: HD tiling plus a new projector and token glue.
 - phi4mm: both missing. Source https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/phi4mm/vision.py (SigLIP2 NaFlex) and language.py (LoRA-bearing Phi3). Needs LoRA merge at repack. Effort L: new tower, LoRA, plus audio branch to refuse.
 - phi4_siglip: both missing. Source https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/phi4_siglip/vision.py. Phi3 trunk via HF `phi3` row, SigLIP2 tower new in ../crates/runtime/src/vision/siglip.rs. Effort M.
@@ -292,7 +303,7 @@ Summary: 11 dirs audited (granite_docling is another group). supported 0, tower-
 | paddleocr_vl | paddleocr_vl | paddleocr_vl/vision.py | none (ERNIE-4.5 style trunk, no ModelFamily) | none (NaViT SigLIP variant; `SigLip` kind is the DeepSeek-VL2 so400m fixed-grid tower, not this) | missing | ../crates/runtime/src/vision/siglip.rs |
 | florence2 | florence2 (vision `davit`) | florence2/vision.py | none (BART-style encoder-decoder, no flow) | none (DaViT) | missing | ../crates/runtime/src/families/ |
 | indic_ocr | indic_ocr (Qwen3.5-0.8B block OCR plus PP-DocLayoutV3 detector) | none (no vision.py; pipeline.py, blocks.py) | QwenGdnDense (`qwen3_5` row) covers the trunk, `indic_ocr` not registered | QwenSiglip would cover the Qwen3.5 tower (unverified for this checkpoint); layout detector has nothing | family-only | ../crates/repack/src/qwen36_config.rs |
-| minicpm_ocr | minicpm_ocr (subclass of minicpmv4_6 plus Qwen3.5 backbone) | none of its own; inherits minicpmv4_6/vision.py | QwenGdnDense exists | MiniCpmV exists (`docs/MINICPMV_VISION_PHASE0.md`, referenced minicpmv4_6 and 4_7), but intake only accepts `model_type == "minicpmv4_7"` and never gated on this checkpoint | tower-only | ../docs/MINICPMV_VISION_PHASE0.md |
+| minicpm_ocr | minicpm_ocr (subclass of minicpmv4_6 plus Qwen3.5 backbone) | none of its own; inherits minicpmv4_6/vision.py | QwenGdnDense exists | MiniCpmV exists (`docs/MINICPMV_VISION_PHASE0.md`), but intake accepts only `minicpmv4_6` and `minicpmv4_7` | tower-only | ../docs/MINICPMV_VISION_PHASE0.md |
 | minicpm_ocr_jev | minicpm_ocr_jev | none | n/a | n/a | out-of-scope (2B Qwen3.5 classifier with a `score` head, scores OCR/render match, not a generator) | n/a |
 | falcon_ocr | falcon_ocr | none (early-fusion, patches fed to the shared trunk; language.py, layout.py) | none (custom Falcon early-fusion trunk with hybrid mask) | none | missing | ../crates/runtime/src/families/ |
 | falcon_perception | falcon_perception | none (anyup.py upsampler) | n/a | n/a | out-of-scope (detection and segmentation output, boxes and masks) | n/a |
@@ -306,7 +317,7 @@ Summary: 11 dirs audited (granite_docling is another group). supported 0, tower-
 - paddleocr_vl: both missing. https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/paddleocr_vl/vision.py (text: .../paddleocr_vl/language.py, ERNIE-4.5 style). Extend ../crates/runtime/src/families/ and ../crates/runtime/src/vision/siglip.rs. Effort L: new trunk plus native-resolution NaViT tower.
 - florence2: both missing. https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/florence2/vision.py (text: .../florence2/language.py, BART encoder-decoder). The decode flow is single-stack; encoder-decoder cross-attention has no home. Effort L: new flow shape plus DaViT.
 - indic_ocr: wiring missing. Block OCR is a Qwen3.5 VL fine-tune (trunk and tower likely covered), but the layout detector and reconstruction stages are pipeline code, not a model. https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/indic_ocr/blocks.py and .../pipeline.py. Extend ../crates/repack/src/arch_registry.rs and ../crates/repack/src/qwen36_config.rs. Effort M for the block OCR checkpoint alone (register, gate on real weights); L if the layout stage is wanted.
-- minicpm_ocr: registration and gate missing. https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/minicpm_ocr/minicpm_ocr.py (differences: tanh-GELU in the window merger `vit_merger.act`, fp32 norm weights, `4x`/`16x` downsample modes, adaptive upsize in processing_minicpm_ocr.py). Extend ../crates/repack/src/qwen36_config.rs (line ~322 gate on `minicpmv4_7`), ../crates/runtime/src/vision/minicpm.rs, ../crates/vision-io/src/minicpm.rs. Effort M: tower exists, needs the GELU variant, a 4x mode check, and a real-model gate.
+- minicpm_ocr: registration and gate missing. https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/minicpm_ocr/minicpm_ocr.py (differences: its `vit_merger.act` override to `tanh` is a no-op in MLX, where `precise` is the same function; fp32 norm weights, `4x`/`16x` downsample modes, adaptive upsize in processing_minicpm_ocr.py). Extend ../crates/repack/src/qwen36_config.rs (the `minicpmv4_6`/`minicpmv4_7` gate), ../crates/runtime/src/vision/minicpm.rs, ../crates/vision-io/src/minicpm.rs. Effort M: tower exists, needs a 4x mode check, norm precision and a real-model gate.
 - minicpm_ocr_jev: out-of-scope, no gap.
 - falcon_ocr: both missing. https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/falcon_ocr/falcon_ocr.py (language.py, layout.py). Early-fusion single trunk, no separate tower. Extend ../crates/runtime/src/families/ and ../crates/model-io/src/arch_config/. Effort L: new family with a bidirectional-image hybrid mask.
 - falcon_perception: out-of-scope, no gap.
@@ -316,12 +327,12 @@ Caveat: rows reflect searches of docs, repack, model-io, catalog, runtime and vi
 
 ## 8. MiniCPM, MoonDream, Molmo, Jina, FastVLM
 
-Summary: 1 supported (minicpmv4_7), 1 tower-only (minicpmv4_6), 1 family-only (minicpmo), 7 missing (moondream2, moondream3, molmo, molmo2, molmo_point, jina_vlm, fastvlm), 0 out-of-scope.
+Summary: 2 supported (minicpmv4_7, minicpmv4_6), 1 family-only (minicpmo), 7 missing (moondream2, moondream3, molmo, molmo2, molmo_point, jina_vlm, fastvlm), 0 out-of-scope.
 
 | mlx-vlm dir | HF model_type | mlx-vlm vision file | TurboSpark text family | TurboSpark vision tower | Status | Files to read |
 |---|---|---|---|---|---|---|
 | minicpmv4_7 | minicpmv4_7 (text_config qwen3_5_moe_text) | [vision.py (via minicpmv4_6)](https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/minicpmv4_6/vision.py) | QwenGdnMoe (text_config fallthrough) | VisionTowerKind::MiniCpmV | supported (real-gated 2026-11-01, thumbnail view only, no `<slice>` crops) | [docs/MINICPMV_VISION_PHASE0.md](../docs/MINICPMV_VISION_PHASE0.md), [docs/MODEL_FAMILY.md](../docs/MODEL_FAMILY.md) line 392, [crates/bench/tests/minicpm_v47_quality_gate.rs](../crates/bench/tests/minicpm_v47_quality_gate.rs) |
-| minicpmv4_6 | minicpmv4_6 (text_config qwen3_5 dense, per language.py) | [vision.py](https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/minicpmv4_6/vision.py) | QwenGdnDense likely (arch_registry "qwen3_5"), not checked end to end | MiniCpmV exists, built from this file, but gated only on the 4.7 MoE 2048-hidden checkpoint | tower-only (never gated on a 4.6 checkpoint; unverified) | [crates/runtime/src/vision/minicpm.rs](../crates/runtime/src/vision/minicpm.rs), [crates/vision-io/src/minicpm.rs](../crates/vision-io/src/minicpm.rs), [crates/repack/src/arch_registry.rs](../crates/repack/src/arch_registry.rs) |
+| minicpmv4_6 | minicpmv4_6 (text_config qwen3_5_text) | [vision.py](https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/minicpmv4_6/vision.py) | QwenGdnDense (text_config fallthrough) | `VisionTowerKind::MiniCpmV46`, sequential positions | supported (2026-11-27, one smoke on the 4-bit build; MLX-quantized combined install only, thumbnail view, no tower parity) | [docs/MINICPMV_VISION_PHASE0.md](../docs/MINICPMV_VISION_PHASE0.md) |
 | minicpmo | minicpmv (root), text qwen3 | [vision.py](https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/minicpmo/vision.py) | Qwen3Dense ("qwen3") probably | none for this variant (SigLIP-NaViT style, not the 4.6/4.7 merger tower; unverified) | family-only (audio and TTS halves also absent) | [crates/repack/src/arch_registry.rs](../crates/repack/src/arch_registry.rs) |
 | moondream2 | moondream2 | [vision.py](https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/moondream2/vision.py) | none (Phi-style custom text) | none | missing | [crates/repack/src/arch_registry.rs](../crates/repack/src/arch_registry.rs) |
 | moondream3 | moondream3 | [vision.py](https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/moondream3/vision.py) | none (custom MoE text) | none | missing | [crates/repack/src/arch_registry.rs](../crates/repack/src/arch_registry.rs) |
@@ -333,7 +344,7 @@ Summary: 1 supported (minicpmv4_7), 1 tower-only (minicpmv4_6), 1 family-only (m
 
 ### Gaps
 
-- minicpmv4_6: tower reader is built from this file's vision.py but only gated on the 4.7 MoE checkpoint (hidden 2048). Needs a dense qwen3_5 (QwenGdnDense) install, a MiniCpmV pairing check for the dense trunk, and a real-weights gate. Port from https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/minicpmv4_6/vision.py. Extend ../crates/runtime/src/vision/minicpm.rs, ../crates/vision-io/src/minicpm.rs, ../crates/repack/src/arch_registry.rs, ../docs/MINICPMV_VISION_PHASE0.md. Effort S/M: tower exists, mostly gating and trunk-dim plumbing. Also `<slice>` crops are not built (shared with 4.7).
+- minicpmv4_6: WIRED (2026-11-27), see [MINICPMV_VISION_PHASE0.md](MINICPMV_VISION_PHASE0.md). The 4-bit build passed text, image and no-image smokes. Owed: tower parity and a server run. `4x` mode and `<slice>` crops are not built (shared with 4.7).
 - minicpmo: vision tower is a different config (siglip_vision_model, Qwen3 text via qwen3_vl mrope default); no tower or wrapper handling here, plus audio/TTS/vocoder out of scope. Port https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/minicpmo/vision.py. Extend ../crates/runtime/src/vision/siglip.rs or minicpm.rs, ../crates/model-io/src/arch_config/sub_configs.rs, ../crates/repack/src/arch_registry.rs (minicpmv root key). Effort M: SigLIP-style tower exists, Qwen3Dense text exists, needs resampler/wrapper reader; text uses mrope.
 - moondream2: no text family, no tower. Port https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/moondream2/vision.py and language.py, image_crops.py. Extend ../crates/runtime/src/families/, ../crates/vision-io/src/, ../crates/runtime/src/vision/. Effort L: new text family (Phi-style, parallel attn) plus crop preprocessing and tower.
 - moondream3: same, with MoE text. Port https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/moondream3/vision.py. Same TurboSpark files. Effort L: new MoE family, crops, tower.
@@ -344,7 +355,7 @@ Summary: 1 supported (minicpmv4_7), 1 tower-only (minicpmv4_6), 1 family-only (m
 - fastvlm: Port https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/fastvlm/vision.py (FastViTHD RepMixer/conv blocks). Extend ../crates/runtime/src/vision/, ../crates/vision-io/src/, ../crates/repack/src/arch_registry.rs (add llava_qwen2 to Qwen2Dense via text_config), ../crates/model-io/src/arch_config/sub_configs.rs. Effort L: conv-hybrid tower is wholly new; text side S.
 
 
-Unverified: dense-trunk wiring for minicpmv4_6 and the llava_qwen2 registry fallthrough were read from source only, not tested.
+Unverified: the llava_qwen2 registry fallthrough was read from source only, not tested.
 
 ## 9. Chinese and other lab VLMs (GLM, Kimi, Hunyuan, Step, MiMo, Youtu, Zaya, ERNIE, MiniMax, PLaMo, LLM-jp)
 
@@ -392,13 +403,13 @@ Caveat: text-family status was checked against `arch_registry.rs` and [docs/MODE
 
 ## 10. LFM, Inkling, Muse, D1
 
-Summary: 2 supported (lfm3_vl, muse_glimmer), 1 tower-only (lfm3_omni), 1 family-only (inkling2), 5 missing (lfm2_vl, d1_lfm3_vl, d1_omni, inkling, muse_spark), 0 out-of-scope. d1_* are non-generative decision models (readout heads, not chat), so they are a different kind of port even though their towers overlap.
+Summary: 3 supported (lfm3_vl, lfm3_omni, muse_glimmer), 1 family-only (inkling2), 5 missing (lfm2_vl, d1_lfm3_vl, d1_omni, inkling, muse_spark), 0 out-of-scope. d1_* are non-generative decision models (readout heads, not chat), so they are a different kind of port even though their towers overlap; d1-Omni-2B shares the `lfm3_omni` model_type and is refused by its `D1Model` class or `d1_*` keys.
 
 | mlx-vlm dir | HF model_type | mlx-vlm vision file | TurboSpark text family | TurboSpark vision tower | Status | Files to read |
 |---|---|---|---|---|---|---|
 | lfm2_vl | `lfm2_vl` (text `lfm2`) | `lfm2_vl/vision.py` (SigLIP2 NaFlex) | none: `lfm2` deliberately unregistered, "a different layer graph" (arch_registry.rs L366-370; MODEL_COVERAGE.md L86 lists it as a planned medium item) | none for this model. `crates/embeddings/src/siglip2` is an embedding model, not wired as a VLM tower; `VisionTowerKind::SigLip` is the DeepSeek-VL2 tower | missing | ../crates/repack/src/arch_registry.rs, ../docs/MODEL_COVERAGE.md |
 | lfm3_vl | `lfm3_vl` (trunk `lfm3`) | `lfm3_vl/vision.py` | `ModelFamily::Lfm3` (arch_registry.rs L370) | `VisionTowerKind::Lfm3Vl`, runtime/vision/lfm3_vl.rs | supported (real-gated 2026-11-01 on `LiquidAI/LFM3-VL-2B-MLX-8bit`; [docs/LFM3_VL_VISION_PHASE0.md](../docs/LFM3_VL_VISION_PHASE0.md); test runtime/tests/lfm3_vl_vision_real.rs). Limits: combined install only, 4-bit build not intaken, no sidecar, no FFI/Swift run | ../docs/LFM3_VL_VISION_PHASE0.md, ../crates/runtime/src/vision/lfm3_vl.rs, ../crates/repack/src/gemma4_checkpoint/vision_lfm3.rs |
-| lfm3_omni | `lfm3_omni` | none own: reuses `lfm3_vl` tower (`lfm3_omni/README.md`); audio is LFM3-Audio | `Lfm3` trunk exists, but no `lfm3_omni` registry row | `Lfm3Vl` tower would apply, no omni intake | tower-only (image path only; audio encoder, depth decoder, codec absent) | ../crates/repack/src/arch_registry.rs, ../crates/model-io/src/arch_config/sub_configs.rs |
+| lfm3_omni | `lfm3_omni` (trunk `lfm3`) | none own: reuses `lfm3_vl` tower and processor (`lfm3_omni/lfm3_omni.py` subclasses `Lfm3VlModel.encode_images` and `Lfm3VlProcessor`); audio is LFM3-Audio | `ModelFamily::Lfm3` (`lfm3_omni` and `lfm3_vl` rows in arch_registry.rs; the D1 decision-model twin is refused by its `D1Model` class or `d1_*` keys) | `VisionTowerKind::Lfm3Vl`, runtime/vision/lfm3_vl.rs | supported (real-gated 2026-11-27 on `LiquidAI/LFM3-Omni-2B-MLX-8bit@5901d16c`: probe, streamed install with the 14-block tower, greedy text smoke, page transcription with a no-image control; [docs/LFM3_OMNI_VISION_PHASE0.md](../docs/LFM3_OMNI_VISION_PHASE0.md)). Limits: image-only by construction (241 audio tensors dropped by name with a report), no tower-stage parity probe, no video, no quality gate or memory oracle, no server/FFI run | ../docs/LFM3_OMNI_VISION_PHASE0.md, ../crates/repack/src/gemma4_checkpoint/vision_lfm3.rs, ../crates/repack/src/arch_registry.rs |
 | d1_lfm3_vl | `lfm3_vl` with `D1Model` arch | `lfm3_vl/vision.py` (shared) | `Lfm3` trunk, but d1 needs set attention and answer-slot readout, no decode | `Lfm3Vl` reusable | missing (decision head and prompt/parse stack absent) | ../docs/LFM3_VL_VISION_PHASE0.md |
 | d1_omni | `d1_omni` | `d1_omni/vision.py` (SigLIP2) | none: bidirectional LFM2.5 encoder plus decision head | none (SigLIP2 not wired), FastConformer audio absent | missing | ../crates/repack/src/arch_registry.rs |
 | inkling | `inkling` (v1) | `inkling/vision.py` | none: no `inkling` row; only `Inkling2Loop` exists | none | missing | ../crates/model-io/src/arch_config/family.rs |
@@ -409,14 +420,14 @@ Summary: 2 supported (lfm3_vl, muse_glimmer), 1 tower-only (lfm3_omni), 1 family
 ### Gaps
 
 - lfm2_vl: both halves missing. Text: LFM2 (conv plus attention, no SWA/sandwich norms) is a new layer graph; vision: SigLIP2 NaFlex with pixel-unshuffle projector. Port from https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/lfm2_vl/vision.py and https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/lfm2_vl/language.py. Extend ../crates/repack/src/arch_registry.rs, ../crates/model-io/src/arch_config/family.rs, ../crates/runtime/src/families/lfm3 (new lfm2 flow), ../crates/runtime/src/vision/lfm3_vl.rs (variant tower). Effort L: new family plus a new tower, though lfm3 shortconv kernels and the Lfm3Vl projector are reusable.
-- lfm3_omni: text trunk and image tower exist, model_type not mapped and no audio path. Port from https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/lfm3_omni/lfm3_omni.py (image-only subset). Extend ../crates/repack/src/arch_registry.rs (add `lfm3_omni` row), ../crates/repack/src/gemma4_checkpoint/vision_lfm3.rs (config reader for omni nesting). Effort S for image-only (registry plus config reader, check tensor prefixes); L if audio in/out is wanted.
+- lfm3_omni: DONE for the image subset (2026-11-27). The registry row, the omni config nesting and the tensor prefixes (`vision_tower.` / `multi_modal_projector.`, same as lfm3_vl; audio under `audio_tower.` / `audio_projector.` / `depth_decoder.` / `codebook_embedding.`) are wired and real-gated; see [docs/LFM3_OMNI_VISION_PHASE0.md](../docs/LFM3_OMNI_VISION_PHASE0.md). Still missing: the audio path (LFM3-Audio encoder, talker, codec) - Effort L if audio in/out is wanted, and the video span.
 - d1_lfm3_vl: decision model, no token decoding: set attention plus readout at answer slots, prompt/calibration/pointer/box parsers. Port from https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/d1_lfm3_vl/d1.py. Extend ../crates/runtime/src/families/lfm3 and ../crates/runtime/src/vision/lfm3_vl.rs. Effort L: new inference mode and API surface; tower is reusable. Worth confirming it is wanted at all.
 - d1_omni: bidirectional LFM2.5 trunk, SigLIP2 tower, FastConformer audio. Port from https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/d1_omni/vision.py and .../d1_omni.py. Extend ../crates/runtime/src/vision/siglip.rs, ../crates/audio. Effort L: three new components.
 - inkling: v1 text family absent (only Inkling2Loop) and no tower. Port from https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/inkling/vision.py and .../language.py. Extend ../crates/model-io/src/arch_config/family.rs, ../crates/repack/src/arch_registry.rs. Effort L: new family, new tower, audio optional. Confirm that v1 checkpoints are public before starting.
 - inkling2: vision tower missing; the text family is verified. Port from https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/inkling2/vision.py. Extend ../crates/model-io/src/arch_config/sub_configs.rs (new `VisionTowerKind`), ../crates/runtime/src/vision/mod.rs, ../crates/runtime/src/real_forward_vision_api.rs, ../crates/repack/src/gemma4_checkpoint/ (config reader), ../docs/INKLING2_PHASE0.md (line 1441). Effort M: tower is a small ViT (embeddings, attention, MLP, 4 classes in vision.py), reusing existing runtime vision blocks; the cost is the real-weight gate against a 17.7 GB resident install (one gate at a time).
 - muse_spark: both halves missing. Text: Muse Spark Open 816B-A42B MoE (no registry row). Vision: its own tower (RoPE2D, adapter, patch embedder); also audio and video processors. Port from https://github.com/Neywa-Labs/mlx-vlm/blob/main/mlx_vlm/models/muse_spark/vision.py, .../language.py, .../muse_spark.py. Extend ../crates/model-io/src/arch_config/family.rs, ../crates/repack/src/arch_registry.rs, ../crates/runtime/src/vision/muse.rs (compare), ../crates/vision-io/src/muse.rs. Effort L, and likely not runnable on a 36 GB Mac at 816B scale, so a real-weight gate is doubtful.
 
-Unverified: whether the `lfm3_vl` HF model_type string is resolved by `config_json_resolution` (it is not in arch_registry.rs tables; the real-install gate in the Phase 0 doc shows it installs via the `lfm3` trunk). The Gemma4 checkpoint vision readers were not read beyond name and docs.
+Unverified: whether the `lfm3_vl` HF model_type string is resolved by `config_json_resolution` - RESOLVED 2026-11-27: the string now has its own arch_registry.rs row (read off `LiquidAI/LFM3-VL-2B-MLX-8bit@6990b981`), so resolution no longer depends on the `text_config.model_type` fallback. The Gemma4 checkpoint vision readers were not read beyond name and docs.
 
 ## 11. Vision-only, segmentation, depth, detection, and image generation (classification pass)
 

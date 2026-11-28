@@ -326,6 +326,13 @@ pub enum VisionTowerKind {
     /// geometry, the insert layer, the thumbnail-only slicing and the canvas
     /// ids are properties of the kind, checked at intake.
     MiniCpmV,
+    /// The same MiniCPM-V tower under a `minicpmv4_6` wrapper over a dense
+    /// qwen3.5 trunk. Its own kind because the trunk is driven differently:
+    /// the 4.6 reference gives every prompt token, image rows included, its
+    /// plain sequential position, where 4.7 places them on a canvas. Sharing
+    /// one persisted string would let a build that only knows 4.7 run a 4.6
+    /// install with the wrong positions instead of refusing it.
+    MiniCpmV46,
     /// The Pixtral tower (Pixtral-12B, `docs/PIXTRAL_VISION_PHASE0.md`): a
     /// bias-free patch conv, an RMSNorm before the first block, RMSNorm
     /// blocks with 2-D rope and a gated SiLU MLP, bidirectional attention over
@@ -382,23 +389,104 @@ pub enum VisionTowerKind {
     /// trunk width, `image_token_id` the bare `<image>` marker. The start and
     /// end ids are 0.
     SigLipOv,
+    /// The Qwen2-VL tower, the pre-2.5 sibling of [`VisionTowerKind::Qwen25Vl`]
+    /// (`docs/QWEN2VL_VISION_PHASE0.md`): the same conv patch embed, the same
+    /// 2-D rope with no absolute position table, and the same fused-qkv
+    /// attention with biases -- but LayerNorm blocks (weight AND bias, eps
+    /// 1e-6) instead of RMSNorm, a plain two-layer GELU MLP (`mlp.fc1` /
+    /// `mlp.fc2`) instead of the gated SiLU one, FULL attention on every
+    /// block (the reference has no window machinery at all), and a two-layer
+    /// merger whose `ln_q` is a LayerNorm. The checkpoint's `mlp_ratio` width
+    /// relation, the layer-norm epsilon and the block MLP's activation (the
+    /// reference runs the fast sigmoid-GELU approximation) are properties of
+    /// the kind, checked at intake rather than stored, which keeps this
+    /// struct float-free.
+    ///
+    /// Field meanings: `hidden_size` is `vision_config.embed_dim` (the
+    /// tower's own residual width), `out_hidden_size` is
+    /// `vision_config.hidden_size` (the trunk width the merger writes into),
+    /// `intermediate_size` is `embed_dim * mlp_ratio`, and
+    /// `num_position_embeddings` is zero. The start/end/image/video ids are
+    /// the config's, all four of which the 2B checkpoint declares at the
+    /// root.
+    Qwen2Vl,
+    /// The InternViT tower the InternVL wrappers carry
+    /// (`docs/INTERNVL_VISION_PHASE0.md`): a conv patch embed, a class row,
+    /// a learned position table (`(image_size / patch_size)^2 + 1` rows)
+    /// bicubically interpolated to whatever grid a tile needs, LayerNorm
+    /// blocks with attention biases and a per-block layer scale
+    /// (`ls1`/`ls2`, checkpoint tensors rather than constants), no rope, no
+    /// mask, and no final norm (the MLX conversions carry none; verified
+    /// against the published indexes). The projector is a LayerNorm, a
+    /// Linear, a GELU and a Linear over the pixel-shuffled rows.
+    ///
+    /// Field meanings: `depth` is 24, `spatial_merge_size` is the pixel
+    /// shuffle's factor (2, the square root of `1 / downsample_ratio^2`),
+    /// `temporal_patch_size` is 1, `num_position_embeddings` counts the
+    /// class row (1025 at 448/14), `out_hidden_size` is the trunk width.
+    /// `image_token_id` is `<IMG_CONTEXT>` and the start and end ids are
+    /// `<img>` / `</img>`, all three resolved from the checkpoint's own
+    /// tokenizer rather than constants, because two published vocabularies
+    /// spell them differently. The layer-norm epsilon (1e-6), the exact GELU,
+    /// the ImageNet normalization constants and the 448 px tile edge are
+    /// properties of the kind, checked at intake rather than stored, which
+    /// keeps this struct float-free.
+    InternViT,
+    /// The variable-size SigLIP tower the Idefics3 and SmolVLM wrappers carry
+    /// (`docs/IDEFICS3_VISION_PHASE0.md`; SmolVLM is an Idefics3 subclass and
+    /// imports its tower and connector verbatim). A conv patch embed with NO
+    /// class row, a learned absolute position table of
+    /// `(image_size / patch_size)^2` rows whose LOOKUP INDEX is rescaled to a
+    /// tile's own grid (fractional coordinates bucketed against the native
+    /// grid's boundaries -- the NaViT-derived position rule; the table itself
+    /// is never interpolated), LayerNorm blocks with attention biases, a tanh
+    /// GELU MLP, and a post-encoder LayerNorm over the LAST block's rows.
+    /// The connector is a pixel shuffle plus one bias-free Linear.
+    ///
+    /// Field meanings: `spatial_merge_size` is the pixel shuffle's factor
+    /// (the config's `scale_factor`, which is 2 on Idefics3-8B and 3 and 4 on
+    /// the published SmolVLM builds -- read per checkpoint, never assumed),
+    /// `temporal_patch_size` is 1, `num_position_embeddings` is
+    /// `(image_size / patch_size)^2` with no class row, and
+    /// `out_hidden_size` is the trunk width. `image_token_id` is the config's
+    /// `<image>` id; the `<fake_token_around_image>`, `<global-img>` and
+    /// `<row_X_col_Y>` separator ids are tokenizer-resolved at attach time
+    /// (on Idefics3-8B the row tags tokenize as BPE pieces; the published
+    /// tokenizer carries no single tokens for them), so the start and end
+    /// ids are 0. The layer-norm epsilon (1e-6), the tanh GELU and the
+    /// 0.5/0.5 normalization pair are properties of the kind, checked at
+    /// intake rather than stored, which keeps this struct float-free.
+    SigLipNaViT,
 }
 
 impl VisionTowerKind {
+    /// Whether the tower is the MiniCPM-V one (both wrapper generations run
+    /// the same weights layout, preprocessing and Metal path).
+    pub fn is_minicpm_v(self) -> bool {
+        matches!(
+            self,
+            VisionTowerKind::MiniCpmV | VisionTowerKind::MiniCpmV46
+        )
+    }
+
     /// The persisted spelling.
     pub fn as_str(self) -> &'static str {
         match self {
             VisionTowerKind::QwenSiglip => "qwen_siglip",
             VisionTowerKind::Gemma4 => "gemma4",
             VisionTowerKind::Qwen25Vl => "qwen25_vl",
+            VisionTowerKind::Qwen2Vl => "qwen2_vl",
             VisionTowerKind::Lfm3Vl => "lfm3_vl",
             VisionTowerKind::Clip => "clip",
             VisionTowerKind::MuseGlimmer => "muse_glimmer",
             VisionTowerKind::MiniCpmV => "minicpm_v",
+            VisionTowerKind::MiniCpmV46 => "minicpm_v46",
             VisionTowerKind::Pixtral => "pixtral",
             VisionTowerKind::SigLip => "siglip",
             VisionTowerKind::DeepseekOcr => "deepseek_ocr",
             VisionTowerKind::SigLipOv => "siglip_ov",
+            VisionTowerKind::InternViT => "internvit",
+            VisionTowerKind::SigLipNaViT => "siglip_navit",
         }
     }
 
@@ -409,14 +497,18 @@ impl VisionTowerKind {
             "qwen_siglip" => Some(VisionTowerKind::QwenSiglip),
             "gemma4" => Some(VisionTowerKind::Gemma4),
             "qwen25_vl" => Some(VisionTowerKind::Qwen25Vl),
+            "qwen2_vl" => Some(VisionTowerKind::Qwen2Vl),
             "lfm3_vl" => Some(VisionTowerKind::Lfm3Vl),
             "clip" => Some(VisionTowerKind::Clip),
             "muse_glimmer" => Some(VisionTowerKind::MuseGlimmer),
             "minicpm_v" => Some(VisionTowerKind::MiniCpmV),
+            "minicpm_v46" => Some(VisionTowerKind::MiniCpmV46),
             "pixtral" => Some(VisionTowerKind::Pixtral),
             "siglip" => Some(VisionTowerKind::SigLip),
             "deepseek_ocr" => Some(VisionTowerKind::DeepseekOcr),
             "siglip_ov" => Some(VisionTowerKind::SigLipOv),
+            "internvit" => Some(VisionTowerKind::InternViT),
+            "siglip_navit" => Some(VisionTowerKind::SigLipNaViT),
             _ => None,
         }
     }

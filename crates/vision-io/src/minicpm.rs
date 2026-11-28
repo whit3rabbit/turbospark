@@ -1,4 +1,4 @@
-//! MiniCPM-V 4.7 image preprocessing, placeholder expansion and canvas
+//! MiniCPM-V 4.6 and 4.7 image preprocessing, placeholder expansion and
 //! positions (`docs/MINICPMV_VISION_PHASE0.md`).
 //!
 //! Ported from mlx-vlm's `minicpmv4_6/processing_minicpmv4_6.py` and
@@ -173,8 +173,18 @@ pub fn minicpm_preprocess(
     })
 }
 
-/// The ids the splice and the canvas positions key on, read off the install
-/// (`VisionConfig` carries the first four; the rest are the kind's constants).
+/// How the trunk is told where each token sits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MiniCpmPositions {
+    /// 4.7: thumbnails on a 2-D canvas ([`canvas_positions`]).
+    Canvas,
+    /// 4.6: the reference's `_set_position_state` gives every token, image
+    /// rows included, its plain index on all three axes.
+    Sequential,
+}
+
+/// The ids the splice and the positions key on, read off the install
+/// (`VisionConfig` carries the first three; the rest are the kind's constants).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MiniCpmIds {
     /// `<|image_pad|>`: the template's marker AND the per-token fill id.
@@ -189,6 +199,7 @@ pub struct MiniCpmIds {
     /// `<image_id>` and `</image_id>`.
     pub image_id_start: i32,
     pub image_id_end: i32,
+    pub positions: MiniCpmPositions,
 }
 
 /// The marker ids the kind fixes, checked against `config.json` at intake
@@ -202,8 +213,11 @@ pub const MINICPM_IMAGE_ID_END: i32 = 248091;
 
 /// `(id, the token text it must resolve to)` for the constant markers, so a
 /// front end can refuse a tokenizer that disagrees instead of splicing ids
-/// that name other tokens.
-pub const MINICPM_MARKER_TOKENS: [(i32, &str); 4] = [
+/// that name other tokens. `<image>` and `</image>` are here because a 4.6
+/// config does not name them.
+pub const MINICPM_MARKER_TOKENS: [(i32, &str); 6] = [
+    (248078, "<image>"),
+    (248079, "</image>"),
     (MINICPM_SLICE_START_ID, "<slice>"),
     (MINICPM_SLICE_END_ID, "</slice>"),
     (MINICPM_IMAGE_ID_START, "<image_id>"),
@@ -214,7 +228,12 @@ impl MiniCpmIds {
     /// The three ids a `VisionConfig` carries (`image_token_id`,
     /// `vision_start_token_id`, `vision_end_token_id`) plus the kind's
     /// constants.
-    pub fn new(image_pad: i32, image_start: i32, image_end: i32) -> Self {
+    pub fn new(
+        image_pad: i32,
+        image_start: i32,
+        image_end: i32,
+        positions: MiniCpmPositions,
+    ) -> Self {
         Self {
             image_pad,
             image_start,
@@ -224,12 +243,13 @@ impl MiniCpmIds {
             newline: MINICPM_NEWLINE_ID,
             image_id_start: MINICPM_IMAGE_ID_START,
             image_id_end: MINICPM_IMAGE_ID_END,
+            positions,
         }
     }
 }
 
 /// Expand every rendered `<|image_pad|>` to its full placeholder run and
-/// compute the canvas positions, in one call so the counts cannot disagree.
+/// compute the positions `ids.positions` names, in one call so the counts cannot disagree.
 ///
 /// `index_ids(k)` is the token ids of the image's ordinal as text (`"0"`,
 /// `"1"`, ...), from the tokenizer, because this crate has none.
@@ -288,7 +308,11 @@ pub fn minicpm_splice_and_positions(
         canvas.push((grid.h / MINICPM_MERGE, grid.w / MINICPM_MERGE));
         image += 1;
     }
-    let (triples, rope_delta) = canvas_positions(&out, ids, &canvas)?;
+    let (triples, rope_delta) = match ids.positions {
+        MiniCpmPositions::Canvas => canvas_positions(&out, ids, &canvas)?,
+        // max + 1 - len is zero: the text after an image keeps counting.
+        MiniCpmPositions::Sequential => ((0..out.len() as i32).map(|i| (i, i, i)).collect(), 0),
+    };
     Ok(SplicedPrompt {
         ids: out,
         positions: MropePositions {
@@ -480,6 +504,7 @@ mod tests {
         newline: 198,
         image_id_start: 9005,
         image_id_end: 9006,
+        positions: MiniCpmPositions::Canvas,
     };
 
     fn digits(k: usize) -> Vec<i32> {
@@ -616,6 +641,27 @@ mod tests {
         assert_eq!(&t[7..10], &[(6, 6, 6), (7, 7, 7), (8, 8, 8)]);
         assert_eq!(t[10], (9, 8, 8));
         assert_eq!(t[11], (9, 9, 9));
+    }
+
+    #[test]
+    fn sequential_positions_count_every_token_with_no_delta() {
+        let ids = MiniCpmIds {
+            positions: MiniCpmPositions::Sequential,
+            ..IDS
+        };
+        let rendered = [10, PAD, 198, 12];
+        let g = GridThw::new(1, 8, 12);
+        let s = minicpm_splice_and_positions(&rendered, &[g], &ids, &digits).unwrap();
+        // The same token layout as the canvas rule, only the positions differ.
+        let canvas = minicpm_splice_and_positions(&rendered, &[g], &IDS, &digits).unwrap();
+        assert_eq!(s.ids, canvas.ids);
+        assert_eq!(s.positions.spans, vec![ImageSpan { start: 5, len: 6 }]);
+        let expect: Vec<_> = (0..s.ids.len() as i32).map(|i| (i, i, i)).collect();
+        assert_eq!(s.positions.triples, expect);
+        assert_eq!(s.positions.rope_delta, 0);
+        assert_ne!(canvas.positions.triples, expect);
+        // The refusals do not depend on the rule.
+        assert!(minicpm_splice_and_positions(&[PAD, 9003], &[g], &ids, &digits).is_err());
     }
 
     #[test]

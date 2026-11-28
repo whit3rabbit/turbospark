@@ -819,6 +819,35 @@ fn vision_info(
             },
         };
     }
+    // The Idefics3 / SmolVLM processor sizes every image off its own config
+    // (longest edge, then whole tiles), so there is no pixel budget to clamp.
+    if runner.idefics3_image_ids().is_some() {
+        let path = runner.vision_dir().join("preprocessor_config.json");
+        let params = std::fs::read_to_string(&path)
+            .map_err(|e| format!("{}: {e}", path.display()))
+            .and_then(|json| {
+                turbospark_vision_io::Idefics3Params::from_preprocessor_config_json(&json)
+                    .map_err(|e| format!("{}: {e}", path.display()))
+            });
+        return match params {
+            Ok(params) => crate::wire::VisionInfo {
+                active: true,
+                image_token_id: Some(image_token_id),
+                reason: None,
+                source,
+                sidecar_path,
+                max_pixels: Some(params.longest_edge * params.longest_edge),
+            },
+            Err(reason) => crate::wire::VisionInfo {
+                active: false,
+                image_token_id: None,
+                reason: Some(reason),
+                source,
+                sidecar_path,
+                max_pixels: None,
+            },
+        };
+    }
     // A DeepSeek-OCR tower pads every image to one 1024 px base view, so its
     // ceiling is that view's area and there is no pixel budget to clamp.
     if runner.deepseek_ocr_image_ids().is_some() {

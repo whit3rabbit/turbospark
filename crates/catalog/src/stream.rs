@@ -394,13 +394,24 @@ pub(crate) fn stream_mlx(
         None
     };
     // Text-only MLX Qwen3 spells the trunk `model.*` just as Qwen2 does, and
-    // so do Llama and Mistral (HF and MLX alike).
+    // so do Llama and Mistral (HF and MLX alike). The `internvl` wrapper's
+    // conversion doubles the trunk prefix (`language_model.model.model.*`),
+    // so its rename follows the same pass -- a no-op on every other header,
+    // which is the rename's own gate.
     if matches!(
         family,
         ModelFamily::Qwen2Dense | ModelFamily::Qwen3Dense | ModelFamily::Llama
     ) {
         for header in &mut headers {
             repack::canonicalize_qwen2_header(header).map_err(|e| e.to_string())?;
+            repack::canonicalize_internvl_header(header).map_err(|e| e.to_string())?;
+        }
+    }
+    // The Idefics3 / SmolVLM conversions spell the trunk
+    // `language_model.layers.*`, without the `model.` level.
+    if family == ModelFamily::Llama {
+        for header in &mut headers {
+            repack::canonicalize_idefics3_header(header).map_err(|e| e.to_string())?;
         }
     }
     if family == ModelFamily::Deepseek2 {
@@ -657,12 +668,19 @@ fn enable_requested_vision(
             | ModelFamily::Qwen3Vl
             | ModelFamily::Qwen4Exp
             | ModelFamily::Qwen2Dense
+            // The `internvl` wrapper (InternVL3.5) resolves its plain dense
+            // `qwen3` trunk through the registry, so this family joins the
+            // vision-ingesting set for that wrapper alone.
+            | ModelFamily::Qwen3Dense
             | ModelFamily::Lfm3
             | ModelFamily::MuseGlimmer
-    ) {
+    ) && !(family == ModelFamily::Llama && is_idefics3_config(config_text))
+    {
         return Err(format!(
             "{}: combined vision ingestion is only wired for the qwen35 dense, qwen36 MoE, \
-             qwen3_vl, qwen4_exp, qwen2 (Qwen2.5-VL), lfm3 and muse_glimmer trunks",
+             qwen3_vl, qwen4_exp, qwen2 (Qwen2.5-VL and InternVL2.5/3), qwen3 (the internvl \
+             wrapper), lfm3 and muse_glimmer trunks, and the llama trunk of the idefics3 and \
+             smolvlm wrappers",
             plan.alias
         ));
     }
@@ -683,17 +701,62 @@ fn enable_requested_vision(
     Ok(())
 }
 
+/// The `pull-vision` refusal for either MiniCPM-V wrapper, by name.
+fn refuse_minicpm_sidecar(
+    weights: &crate::hf::RepoRef,
+    config: &serde_json::Value,
+) -> Result<(), String> {
+    match config.get("model_type").and_then(|v| v.as_str()) {
+        Some(wrapper @ ("minicpmv4_6" | "minicpmv4_7")) => Err(format!(
+            "{weights}: a MiniCPM-V ({wrapper}) tower cannot be installed as a sidecar; its \
+             pairing record cannot tell its trunk from an unrelated qwen3.5 trunk of the same \
+             width. Install the whole checkpoint with `turbospark-model pull --repo`, which \
+             keeps the tower"
+        )),
+        _ => Ok(()),
+    }
+}
+
+/// Whether a config is one of the Idefics3 / SmolVLM wrappers, the one case
+/// where a llama trunk ingests a tower.
+fn is_idefics3_config(config_text: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(config_text)
+        .ok()
+        .and_then(|v| {
+            v.get("model_type")
+                .and_then(serde_json::Value::as_str)
+                .map(|m| m == repack::IDEFICS3_MODEL_TYPE || m == repack::SMOLVLM_MODEL_TYPE)
+        })
+        .unwrap_or(false)
+}
+
 /// The family's vision-config reader. The `lfm3` trunk carries its own tower
-/// kind (`docs/LFM3_VL_VISION_PHASE0.md`); every other ingesting family reads
-/// the Qwen SigLIP-class tower.
+/// kind (`docs/LFM3_VL_VISION_PHASE0.md`), and the two InternVL wrappers
+/// (`internvl_chat` over qwen2, `internvl` over qwen3) carry InternViT
+/// (`docs/INTERNVL_VISION_PHASE0.md`); every other ingesting family reads
+/// the Qwen SigLIP-class tower. The InternVL dispatch keys on the config's
+/// ROOT model_type because the family resolves through the trunk, which the
+/// same file also names.
 fn parse_vision_for_family(
     family: ModelFamily,
     config_text: &str,
 ) -> Result<model_io::VisionConfig, repack::Gemma4Error> {
-    if family == ModelFamily::Lfm3 {
-        repack::parse_lfm3_vl_vision_config(config_text)
-    } else {
-        repack::parse_vision_config(config_text)
+    let wrapper = serde_json::from_str::<serde_json::Value>(config_text)
+        .ok()
+        .and_then(|v| {
+            v.get("model_type")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        });
+    match wrapper.as_deref() {
+        Some(repack::INTERNVL_CHAT_MODEL_TYPE) | Some(repack::INTERNVL_MODEL_TYPE) => {
+            repack::parse_internvl_vision_config(config_text)
+        }
+        Some(repack::IDEFICS3_MODEL_TYPE) | Some(repack::SMOLVLM_MODEL_TYPE) => {
+            repack::parse_idefics3_vision_config(config_text)
+        }
+        _ if family == ModelFamily::Lfm3 => repack::parse_lfm3_vl_vision_config(config_text),
+        _ => repack::parse_vision_config(config_text),
     }
 }
 
@@ -735,16 +798,18 @@ fn enable_bytes_detected_vision(
     // both halves of the shared qwen3_5 architecture and nothing else (an
     // enabled tower under a family that buckets the prefix as
     // `ExcludedMultimodal` would write a manifest declaring tensors the
-    // install does not carry).
+    // install does not carry). Qwen3Dense joins for the `internvl` wrapper.
     if !matches!(
         family,
         ModelFamily::QwenGdnDense
             | ModelFamily::QwenGdnMoe
             | ModelFamily::Qwen3Vl
             | ModelFamily::Qwen2Dense
+            | ModelFamily::Qwen3Dense
             | ModelFamily::Lfm3
             | ModelFamily::MuseGlimmer
-    ) {
+    ) && !(family == ModelFamily::Llama && is_idefics3_config(config_text))
+    {
         return Ok(());
     }
     // A wrapper whose `vision_tower.` is not this family's tower (MiniCPM-V
@@ -755,10 +820,23 @@ fn enable_bytes_detected_vision(
     if repack::has_foreign_vision_tower(&config) {
         return Ok(());
     }
+    // An InternVL wrapper's tower prefixes are its OWN (`vision_model.` /
+    // `vision_tower.` beside `mlp1.` / `multi_modal_projector.`), so the
+    // carries-tower check names them -- but only under a wrapper this port
+    // resolves as InternVL, so no other checkpoint's coincidental prefix
+    // turns a text-only install into a refused one.
+    let root_model_type = config.get("model_type").and_then(|v| v.as_str());
+    let internvl_wrapper = root_model_type == Some(repack::INTERNVL_CHAT_MODEL_TYPE)
+        || root_model_type == Some(repack::INTERNVL_MODEL_TYPE);
+    let idefics3_wrapper = is_idefics3_config(config_text);
     let carries_tower = headers.iter().any(|h| {
-        h.tensors
-            .keys()
-            .any(|k| k.starts_with(repack::VISION_PREFIX))
+        h.tensors.keys().any(|k| {
+            k.starts_with(repack::VISION_PREFIX)
+                || (idefics3_wrapper && k.starts_with(repack::IDEFICS3_TOWER_PREFIX))
+                || (internvl_wrapper
+                    && (k.starts_with(repack::INTERNVL_CHAT_TOWER_PREFIX)
+                        || k.starts_with(repack::INTERNVL_TOWER_PREFIX)))
+        })
     });
     if !carries_tower {
         return Ok(());
@@ -848,11 +926,62 @@ fn install_vision_preprocessor(
             }
         }
     }
+    // An InternVL wrapper may ship neither usable file
+    // (`mlx-community/InternVL3_5-1B-4bit`'s `processor_config.json` names
+    // only `image_seq_length`). The reference processor defaults its tiling
+    // controls and normalization constants for such a file
+    // (`internvl/processing_internvl.py::from_pretrained` reads
+    // `processor_config.json` for `image_seq_length` alone and sizes the
+    // image processor from `config.json`'s own defaults), so the stub below
+    // writes exactly those defaults -- the same values every published
+    // InternVL preprocessor_config.json states -- rather than refusing an
+    // install whose images would preprocess identically.
+    if matches!(fetched, Ok(None)) {
+        let wrapper_is_internvl = client
+            .get_optional(&plan.weights.file_url("config.json"))
+            .ok()
+            .flatten()
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+            .and_then(|c| {
+                c.get("model_type")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_owned)
+            })
+            .is_some_and(|m| {
+                m == repack::INTERNVL_CHAT_MODEL_TYPE || m == repack::INTERNVL_MODEL_TYPE
+            });
+        if wrapper_is_internvl {
+            fetched = Ok(Some(
+                serde_json::to_vec_pretty(&internvl_default_preprocessor_json())
+                    .map_err(|e| e.to_string())?,
+            ));
+        }
+    }
     write_vision_preprocessor(
         &plan.weights,
         &dir.join("preprocessor_config.json"),
         fetched,
     )
+}
+
+/// The reference InternVL image processor's defaults, as the stub
+/// `preprocessor_config.json` written when a wrapper ships no usable one.
+/// The values are the reference's own defaults (`size` 448 from
+/// `vision_config.image_size`, the ImageNet mean/std pair), which the
+/// published files that DO carry the file state verbatim.
+fn internvl_default_preprocessor_json() -> serde_json::Value {
+    serde_json::json!({
+        "crop_size": 448,
+        "do_center_crop": true,
+        "do_normalize": true,
+        "do_resize": true,
+        "image_mean": [0.485, 0.456, 0.406],
+        "image_std": [0.229, 0.224, 0.225],
+        "resample": 3,
+        "size": 448,
+        "synthesized_by": "turbospark (the checkpoint ships no preprocessor_config.json; \
+                           these are the reference processor's defaults)"
+    })
 }
 
 /// LFM3-VL ships no `preprocessor_config.json`: its image settings are the
@@ -1375,16 +1504,10 @@ pub(crate) fn stream_vision_sidecar(
     // declared output width; the rest of the arch this returns describes the
     // TRUNK, which this walk does not install.
     // A MiniCPM-V tower is refused as a sidecar: its pairing record can only
-    // say "qwen35moe, hidden 2048", which is also what an unrelated Qwen3.6
-    // trunk says, so attaching it would be silent where this tower's mergers
+    // say a family and a hidden width (4.7: "qwen35moe, 2048"), which an
+    // unrelated Qwen trunk also says, so attaching it would be silent where this tower's mergers
     // and trunk fine-tune are not interchangeable. It is a combined install.
-    if config.get("model_type").and_then(|v| v.as_str()) == Some("minicpmv4_7") {
-        return Err(format!(
-            "{weights}: a MiniCPM-V 4.7 tower cannot be installed as a sidecar; its pairing \
-             record cannot tell its trunk from a Qwen3.6 trunk of the same width. Install the \
-             whole checkpoint with `turbospark-model pull --repo`, which keeps the tower"
-        ));
-    }
+    refuse_minicpm_sidecar(weights, &config)?;
     let family = repack::config_json_family(&config)
         .ok_or_else(|| "config.json declares no model_type this port recognizes".to_string())?;
     let arch = match family {
@@ -2384,8 +2507,8 @@ mod tests {
 
     use super::{
         download_cache_for_install, enable_bytes_detected_vision, enable_requested_vision,
-        immutable_download_cache, retain_complete_shard_set, shard_names_for_prefixes,
-        write_vision_preprocessor,
+        immutable_download_cache, refuse_minicpm_sidecar, retain_complete_shard_set,
+        shard_names_for_prefixes, write_vision_preprocessor,
     };
     use crate::{Catalog, InstallPlan};
     use model_io::ModelFamily;
@@ -2564,6 +2687,88 @@ mod tests {
         .unwrap();
         assert!(arch.vision.is_active(), "tower bytes must enable the tower");
         assert_eq!(arch.vision.depth, 27);
+    }
+
+    /// MiniCPM-V 4.6 is a dense qwen3.5 trunk, so it takes the dense arm of
+    /// bytes detection with its own tower kind, and never a sidecar.
+    #[test]
+    fn a_minicpm_v46_wrapper_enables_its_tower_and_refuses_a_sidecar() {
+        let config = include_str!("../../repack/tests/fixtures/minicpm_v46_4bit_config.json");
+        let headers = [header_with(&[
+            "language_model.model.embed_tokens.weight",
+            "vision_tower.post_layernorm.weight",
+            "vit_merger.linear_1.weight",
+            "merger.mlp.0.linear_1.weight",
+        ])];
+        let mut arch = model_io::qwen_gdn_dense_27b();
+        arch.hidden_size = 1024;
+        enable_bytes_detected_vision(
+            &probe_plan(),
+            ModelFamily::QwenGdnDense,
+            &mut arch,
+            &headers,
+            config,
+        )
+        .unwrap();
+        assert_eq!(arch.vision.tower, model_io::VisionTowerKind::MiniCpmV46);
+
+        let repo = crate::hf::RepoRef::new("example/vlm", "main");
+        for wrapper in ["minicpmv4_6", "minicpmv4_7"] {
+            let err = refuse_minicpm_sidecar(&repo, &serde_json::json!({"model_type": wrapper}))
+                .unwrap_err();
+            assert!(err.contains(wrapper), "{err}");
+        }
+        let plain = serde_json::json!({"model_type": "qwen3_5"});
+        assert!(refuse_minicpm_sidecar(&repo, &plain).is_ok());
+    }
+
+    /// The one llama-trunk case that ingests a tower: the Idefics3 / SmolVLM
+    /// wrappers, whose tower sits under `vision_model.`. The same tensor name
+    /// beside a plain llama config enables nothing.
+    #[test]
+    fn an_idefics3_wrapper_enables_the_tower_over_a_llama_trunk() {
+        let plan = probe_plan();
+        let headers = [header_with(&[
+            "language_model.model.embed_tokens.weight",
+            "vision_model.post_layernorm.weight",
+        ])];
+        let config = |model_type: &str| {
+            serde_json::json!({
+                "model_type": model_type, "scale_factor": 4, "image_token_id": 190,
+                "text_config": {"model_type": "llama", "hidden_size": 576},
+                "vision_config": {
+                    "model_type": "idefics3_vision", "hidden_size": 768,
+                    "intermediate_size": 3072, "num_hidden_layers": 12,
+                    "num_attention_heads": 12, "image_size": 512, "patch_size": 16,
+                    "num_channels": 3
+                }
+            })
+            .to_string()
+        };
+        let mut arch = model_io::known_architecture(ModelFamily::Llama);
+        arch.hidden_size = 576;
+        let text_only = arch.clone();
+        enable_bytes_detected_vision(
+            &plan,
+            ModelFamily::Llama,
+            &mut arch,
+            &headers,
+            &config("idefics3"),
+        )
+        .unwrap();
+        assert_eq!(arch.vision.tower, model_io::VisionTowerKind::SigLipNaViT);
+        assert!(arch.vision.is_active());
+
+        let mut arch = text_only;
+        enable_bytes_detected_vision(
+            &plan,
+            ModelFamily::Llama,
+            &mut arch,
+            &headers,
+            &config("llama"),
+        )
+        .unwrap();
+        assert!(!arch.vision.is_active());
     }
 
     /// The Ornith rule, held at the new layer: a config that DECLARES a tower

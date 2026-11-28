@@ -456,6 +456,27 @@ fn the_minicpm_v47_mxfp4_config_is_runnable_as_qwen36() {
     assert_eq!(report.arch.expect("arch").vocab_size, 248_144);
 }
 
+/// `mlx-community/MiniCPM-V-4.6-4bit` is runnable as a dense qwen3.5; the same
+/// config with no quantization block (the upstream and BF16 repos) is refused
+/// instead of offered for quantize-on-install.
+#[test]
+fn the_minicpm_v46_config_is_runnable_only_when_pre_quantized() {
+    let config = include_str!("../../repack/tests/fixtures/minicpm_v46_4bit_config.json");
+    let report = evaluate_config(config, &repo(), None).expect("the config parses");
+    assert_eq!(report.verdict, Verdict::Runnable, "{:?}", report.verdict);
+    assert_eq!(report.family, Some(model_io::ModelFamily::QwenGdnDense));
+    assert_eq!(report.affine, Some((4, 64)));
+
+    let mut bf16: serde_json::Value = serde_json::from_str(config).unwrap();
+    bf16.as_object_mut().unwrap().remove("quantization");
+    bf16.as_object_mut().unwrap().remove("quantization_config");
+    let report = evaluate_config(&bf16.to_string(), &repo(), None).expect("the config parses");
+    let Verdict::Refused(reason) = report.verdict else {
+        panic!("an unquantized MiniCPM-V 4.6 must not be admitted")
+    };
+    assert!(reason.contains("minicpmv4_6"), "{reason}");
+}
+
 /// The override check is per tensor: a group-128 INT8 gate has no kernel
 /// even inside an mxfp4 checkpoint (the parser refuses it first).
 #[test]

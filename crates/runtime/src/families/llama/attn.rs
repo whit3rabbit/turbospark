@@ -329,8 +329,14 @@ pub(super) fn encode_attention_row_post(
     let theta = arch.full_rope_theta as f32;
     // Qwen2.5-VL splits the rotary pairs into three CONTIGUOUS runs where
     // Qwen3-VL interleaves them; the tower kind says which the trunk was
-    // trained with (`docs/QWEN25_VL_VISION_PHASE0.md`).
-    let chunked_mrope = arch.vision.tower == model_io::VisionTowerKind::Qwen25Vl;
+    // trained with (`docs/QWEN25_VL_VISION_PHASE0.md`). Qwen2-VL is the same
+    // chunked scheme: the two references' `get_rope_index` agree on images
+    // (their diff is video-only, `second_per_grid_ts`), so the 2-VL kind
+    // takes the chunked kernel too (`docs/QWEN2VL_VISION_PHASE0.md`).
+    let chunked_mrope = matches!(
+        arch.vision.tower,
+        model_io::VisionTowerKind::Qwen25Vl | model_io::VisionTowerKind::Qwen2Vl
+    );
     for (data, heads) in [(query, num_heads), ((k_buf, k_off), num_kv)] {
         if let Some(positions) = mrope {
             let sections = (section[0] as u32, section[1] as u32, section[2] as u32);
@@ -583,5 +589,81 @@ impl crate::real_forward::RealForwardRunner {
         )?;
 
         Ok(())
+    }
+}
+
+/// Which mRoPE selector the shared llama flow runs per vision tower kind
+/// (`docs/QWEN2VL_VISION_PHASE0.md`). A real-install transcription passes with
+/// either selector, so this seam is pinned on a synthetic Qwen2 trunk. A unit
+/// test because open() checks the manifest's arch, and a manifest declaring a
+/// tower must also ship one.
+#[cfg(all(test, target_os = "macos"))]
+mod mrope_seam_tests {
+    use crate::vision::VisionEmbedding;
+    use crate::{LogitProducer, RealForwardRunner};
+    use foundation::LogitValue as F16;
+    use model_io::VisionTowerKind;
+    use turbospark_vision_io::{mrope_position_triples, GridThw, VisionSpecialIds};
+
+    const VOCAB: i64 = 256;
+    const PAD: i32 = 22;
+
+    /// Last-position logits of one image prompt under `tower`.
+    fn logits_for(dir: &std::path::Path, tower: VisionTowerKind) -> Vec<u16> {
+        let arch = turbospark_repack::peek_manifest_arch(dir).expect("peeks");
+        let mut runner = RealForwardRunner::open(dir, arch).expect("opens");
+        let hidden = runner.arch.hidden_size as usize;
+        runner.arch.vision.tower = tower;
+        // 16 rotary pairs. Chunked and interleaved disagree on this split.
+        runner.arch.vision.mrope_section = [4, 6, 6];
+
+        // A 2x2 merged block, so h and w both vary inside the image.
+        let ids: Vec<i32> = vec![3, 7, 21, PAD, PAD, PAD, PAD, 23, 13, 17];
+        let grid = GridThw::new(1, 4, 4);
+        let special = VisionSpecialIds {
+            vision_start: 21,
+            image_pad: PAD,
+        };
+        let positions = mrope_position_triples(&ids, &[grid], special, 2).expect("walks");
+        let embedding = VisionEmbedding {
+            rows: (0..4 * hidden)
+                .map(|i| half::f16::from_f32((i as f32 * 0.37).sin()).to_bits())
+                .collect(),
+            merged_tokens: 4,
+            out_hidden: hidden,
+            grid,
+            deepstack: Vec::new(),
+        };
+        runner
+            .set_prompt_vision(&[embedding], &positions, ids.len())
+            .expect("the map validates");
+
+        let mut head = vec![F16::from_f32(0.0); VOCAB as usize];
+        for (position, &token) in ids.iter().enumerate() {
+            runner
+                .produce(token, position, &mut head)
+                .expect("produces");
+        }
+        head.into_iter().map(|v| v.to_bits()).collect()
+    }
+
+    #[test]
+    fn qwen2_vl_takes_the_chunked_mrope_selector() {
+        let dir =
+            std::env::temp_dir().join(format!("turbospark-qwen2vl-mrope-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        turbospark_repack::build_synthetic_qwen2_install(&dir, VOCAB, 4, "tiny-qwen2-mrope")
+            .expect("builds");
+
+        let qwen2 = logits_for(&dir, VisionTowerKind::Qwen2Vl);
+        let qwen25 = logits_for(&dir, VisionTowerKind::Qwen25Vl);
+        let interleaved = logits_for(&dir, VisionTowerKind::QwenSiglip);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_ne!(
+            qwen25, interleaved,
+            "the fixture must be able to tell the two selectors apart"
+        );
+        assert_eq!(qwen2, qwen25, "qwen2_vl must run the chunked selector");
     }
 }

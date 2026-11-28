@@ -27,6 +27,8 @@ mod vision;
 mod vision_clip;
 mod vision_deepseek_ocr;
 mod vision_gemma4;
+mod vision_idefics3;
+mod vision_internvl;
 mod vision_lfm3;
 mod vision_minicpm;
 mod vision_muse;
@@ -35,9 +37,10 @@ mod vision_pixtral;
 mod vision_siglip;
 
 pub use classify::{
-    canonicalize_deepseek_vl2_header, canonicalize_flint_header, canonicalize_qwen2_header,
-    canonicalize_vision_header, classify_for_family, classify_gemma4, Gemma4Bucket, DFLASH_PREFIX,
-    MTP_PREFIX, VISION_INSTALL_PREFIX, VISION_PREFIX, VISION_SOURCE_PREFIXES,
+    canonicalize_deepseek_vl2_header, canonicalize_flint_header, canonicalize_idefics3_header,
+    canonicalize_internvl_header, canonicalize_qwen2_header, canonicalize_vision_header,
+    classify_for_family, classify_gemma4, Gemma4Bucket, DFLASH_PREFIX, MTP_PREFIX,
+    VISION_INSTALL_PREFIX, VISION_PREFIX, VISION_SOURCE_PREFIXES,
 };
 pub(crate) use config::parse_quantization_admitting;
 pub use config::{
@@ -67,6 +70,8 @@ pub use vision::{
     DEEPSTACK_MERGER_SUFFIXES as VISION_DEEPSTACK_MERGER_SUFFIXES,
     QWEN25_BLOCK_ROLES as VISION_QWEN25_BLOCK_ROLES,
     QWEN25_RESIDENT_TENSORS as VISION_QWEN25_RESIDENT_TENSORS,
+    QWEN2_VL_BLOCK_ROLES as VISION_QWEN2_VL_BLOCK_ROLES,
+    QWEN2_VL_RESIDENT_TENSORS as VISION_QWEN2_VL_RESIDENT_TENSORS,
     RESIDENT_TENSORS as VISION_RESIDENT_TENSORS,
 };
 pub use vision_clip::{
@@ -82,7 +87,17 @@ pub use vision_gemma4::{
     parse_gemma4_vision_config, EMBED_VISION_PREFIX, GEMMA4_BLOCK_ROLES,
     GEMMA4_PROJECTOR_INSTALL_NAME, GEMMA4_RESIDENT_TENSORS,
 };
-pub use vision_lfm3::parse_lfm3_vl_vision_config;
+pub use vision_idefics3::{
+    parse_idefics3_vision_config, read_idefics3_vision_entries, IDEFICS3_BLOCK_ROLES,
+    IDEFICS3_CONNECTOR_PREFIX, IDEFICS3_MODEL_TYPE, IDEFICS3_PROJECTOR_PREFIX,
+    IDEFICS3_TOWER_PREFIX, SMOLVLM_MODEL_TYPE,
+};
+pub use vision_internvl::{
+    parse_internvl_vision_config, read_internvl_vision_entries, INTERNVL_BLOCK_ROLES,
+    INTERNVL_CHAT_MODEL_TYPE, INTERNVL_CHAT_PROJECTOR_PREFIX, INTERNVL_CHAT_TOWER_PREFIX,
+    INTERNVL_MODEL_TYPE, INTERNVL_PROJECTOR_PREFIX, INTERNVL_TOWER_PREFIX,
+};
+pub use vision_lfm3::{parse_lfm3_vl_vision_config, refuse_lfm3_omni_d1};
 pub use vision_minicpm::{
     MERGER_PREFIX as MINICPM_MERGER_PREFIX, MINICPM_BLOCK_ROLES, MINICPM_MERGER,
     MINICPM_SOURCE_PREFIXES, MINICPM_TOWER_RESIDENT, MINICPM_VIT_MERGER,
@@ -162,6 +177,31 @@ fn write_gemma4_install_streamed_in_place(
         plan.resident_bases.len(),
         plan.routed.len(),
     ));
+    // THE AUDIO REFUSAL, made visible. An lfm3_omni checkpoint ships 241
+    // LFM3-Audio tensors beside its tower (`vision_lfm3::
+    // LFM3_OMNI_AUDIO_TENSOR_PREFIXES`); classification drops them by name,
+    // and without this line the install would say nothing about it -- which
+    // is the "silently ignored" failure the omni bring-up was told not to
+    // ship. The count is over this checkpoint's own names, so a text-only
+    // lfm3 install (no audio tensors, no tower) prints nothing.
+    if arch.family == ModelFamily::Lfm3 {
+        let audio = plan
+            .excluded
+            .iter()
+            .filter(|name| {
+                vision_lfm3::LFM3_OMNI_AUDIO_TENSOR_PREFIXES
+                    .iter()
+                    .any(|prefix| name.starts_with(prefix))
+            })
+            .count();
+        if audio > 0 {
+            progress(&format!(
+                "left out {audio} LFM3-Omni audio tensors (audio_tower., audio_projector., \
+                 depth_decoder., codebook_embedding.): the LFM3-Audio half has no path on \
+                 this port, so the install is image-only"
+            ));
+        }
+    }
 
     let mut resident =
         orchestrate::read_resident_entries_from_shards(shards, &plan.resident_bases, quant, arch)?;

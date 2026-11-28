@@ -268,3 +268,72 @@ fn qwen3_is_separated_from_its_prefix_neighbours() {
     assert_eq!(hf_family_for_model_type("qwen3_dense"), None);
     assert_eq!(hf_family_for_model_type("qwen"), None);
 }
+
+/// The omni wrapper and its plain trunk are distinct strings resolving to
+/// the SAME family, which is the opposite hazard of the qwen pair above: a
+/// prefix match in the OTHER direction would let the wrapper absorb the
+/// trunk's rows (or vice versa) silently. Both directions are exact: `lfm3`
+/// resolves, `lfm3_omni` resolves, and neither is a prefix of the other's
+/// row. Read off `LiquidAI/LFM3-Omni-2B-MLX-8bit` @ 5901d16c (root
+/// `model_type` `lfm3_omni`, `text_config.model_type` `lfm3`).
+#[test]
+fn the_lfm3_trunk_and_omni_wrapper_resolve_without_collapsing() {
+    assert_eq!(hf_family_for_model_type("lfm3"), Some(ModelFamily::Lfm3));
+    assert_eq!(
+        hf_family_for_model_type("lfm3_omni"),
+        Some(ModelFamily::Lfm3)
+    );
+    // A wrapper spelling nobody publishes yet stays unrecognized, so a
+    // future family gets its own row rather than inheriting this one.
+    assert_eq!(hf_family_for_model_type("lfm3_omni_text"), None);
+    // The VL wrapper's own root string, now explicit rather than a
+    // text_config-fallback accident.
+    assert_eq!(hf_family_for_model_type("lfm3_vl"), Some(ModelFamily::Lfm3));
+}
+
+/// The three Qwen strings the exact-equality lookup must keep apart, in BOTH
+/// directions: the plain dense trunk (`qwen2`), the pre-2.5 VL wrapper
+/// (`qwen2_vl`), and the 2.5 wrapper (`qwen2_5_vl`) all resolve to the SAME
+/// family through three DIFFERENT rows, so a prefix or substring match
+/// anywhere in the lookup would silently hand one wrapper's checkpoint to
+/// another wrapper's tower reader. `qwen2` is a prefix of both -- this is
+/// the same hazard the `qwen3` / `qwen3_vl` pair above records, one
+/// character worse, because `qwen2_vl` and `qwen2_5_vl` share even more of
+/// the string.
+#[test]
+fn the_qwen2_wrapper_trio_is_exact_in_both_directions() {
+    assert_eq!(
+        hf_family_for_model_type("qwen2"),
+        Some(ModelFamily::Qwen2Dense)
+    );
+    assert_eq!(
+        hf_family_for_model_type("qwen2_vl"),
+        Some(ModelFamily::Qwen2Dense)
+    );
+    assert_eq!(
+        hf_family_for_model_type("qwen2_5_vl"),
+        Some(ModelFamily::Qwen2Dense)
+    );
+    // The near-misses a prefix match would absorb. Each names a checkpoint
+    // this registry has no row for, so None is the only honest answer.
+    assert_eq!(hf_family_for_model_type("qwen2_v"), None);
+    assert_eq!(hf_family_for_model_type("qwen2_5"), None);
+    assert_eq!(hf_family_for_model_type("qwen2_5_vl_text"), None);
+    assert_eq!(hf_family_for_model_type("qwen2_vl_moe"), None);
+}
+
+/// Exact strings only: the Idefics3 wrappers resolve to the llama trunk and
+/// the vision tower's own `idefics3_vision` string resolves to nothing.
+#[test]
+fn the_idefics3_wrappers_resolve_to_llama_exactly() {
+    assert_eq!(
+        hf_family_for_model_type("idefics3"),
+        Some(ModelFamily::Llama)
+    );
+    assert_eq!(
+        hf_family_for_model_type("smolvlm"),
+        Some(ModelFamily::Llama)
+    );
+    assert_eq!(hf_family_for_model_type("idefics3_vision"), None);
+    assert_eq!(hf_family_for_model_type("idefics2"), None);
+}

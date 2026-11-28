@@ -58,6 +58,7 @@ impl RealForwardRunner {
             .as_ref()
             .map(|v| v.last_scratch_bytes)
             .or_else(|| self.qwen25_vision.as_ref().map(|v| v.last_scratch_bytes))
+            .or_else(|| self.qwen2_vision.as_ref().map(|v| v.last_scratch_bytes))
             .or_else(|| self.muse_vision.as_ref().map(|v| v.last_scratch_bytes))
     }
 
@@ -130,13 +131,16 @@ impl RealForwardRunner {
                 .encode_image_qwen25(image, params, None)
                 .map(|(e, _)| e);
         }
+        if self.arch.vision.tower == model_io::VisionTowerKind::Qwen2Vl {
+            return self.encode_image_qwen2(image, params, None).map(|(e, _)| e);
+        }
         if self.arch.vision.tower == model_io::VisionTowerKind::Lfm3Vl {
             return self.encode_image_lfm3(image, params, None);
         }
         if self.arch.vision.tower == model_io::VisionTowerKind::MuseGlimmer {
             return self.encode_image_muse(image, params, None).map(|(e, _)| e);
         }
-        if self.arch.vision.tower == model_io::VisionTowerKind::MiniCpmV {
+        if self.arch.vision.tower.is_minicpm_v() {
             return self.encode_image_minicpm(image, params, None);
         }
         self.open_vision_tower()?;
@@ -166,6 +170,14 @@ impl RealForwardRunner {
             )?;
             return Ok((embedding, stages.expect("requested just above")));
         }
+        if self.arch.vision.tower == model_io::VisionTowerKind::Qwen2Vl {
+            let (embedding, stages) = self.encode_image_qwen2(
+                image,
+                params,
+                Some(crate::vision::VisionStages::default()),
+            )?;
+            return Ok((embedding, stages.expect("requested just above")));
+        }
         if self.arch.vision.tower == model_io::VisionTowerKind::Lfm3Vl {
             // The LFM3-VL tower reports the patch embedding and every block's
             // output; the shared `VisionStages` carries the first and last.
@@ -184,7 +196,7 @@ impl RealForwardRunner {
             )?;
             return Ok((embedding, stages.expect("requested just above")));
         }
-        if self.arch.vision.tower == model_io::VisionTowerKind::MiniCpmV {
+        if self.arch.vision.tower.is_minicpm_v() {
             let mut stages = crate::vision::minicpm::MiniCpmStages::default();
             let embedding = self.encode_image_minicpm(image, params, Some(&mut stages))?;
             return Ok((
@@ -201,13 +213,20 @@ impl RealForwardRunner {
     /// preprocessing and prompt layout and so its own front-end entry,
     /// [`Self::attach_minicpm_images`].
     pub fn is_minicpm_vision(&self) -> bool {
-        self.arch.vision.is_active()
-            && self.arch.vision.tower == model_io::VisionTowerKind::MiniCpmV
+        self.arch.vision.is_active() && self.arch.vision.tower.is_minicpm_v()
+    }
+
+    /// The prompt-layout ids and position rule of this install's MiniCPM-V
+    /// tower. Every front end takes them from here, so the 4.6 and 4.7 rules
+    /// cannot be mixed up per call site. Meaningful only when
+    /// [`Self::is_minicpm_vision`] holds.
+    pub fn minicpm_ids(&self) -> turbospark_vision_io::MiniCpmIds {
+        crate::vision::minicpm::ids_for(&self.arch.vision)
     }
 
     /// The whole MiniCPM-V image path for one turn: preprocess every image,
     /// expand each rendered `<|image_pad|>` into its `<image_id>`/`<image>`/
-    /// fill/`</image>` run with the canvas positions, run the tower, and hand
+    /// fill/`</image>` run with the wrapper's positions, run the tower, and hand
     /// this runner the injection map. Returns the expanded ids to prefill.
     ///
     /// `index_ids(k)` is the image ordinal as text tokens and `token_text(id)`
@@ -252,12 +271,7 @@ impl RealForwardRunner {
                     .map_err(|e| bad(format!("image {k}: {e}")))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let v = &self.arch.vision;
-        let ids = turbospark_vision_io::MiniCpmIds::new(
-            v.image_token_id as i32,
-            v.vision_start_token_id as i32,
-            v.vision_end_token_id as i32,
-        );
+        let ids = self.minicpm_ids();
         let grids: Vec<_> = prepared.iter().map(|p| p.grid).collect();
         let spliced =
             turbospark_vision_io::minicpm_splice_and_positions(rendered, &grids, &ids, index_ids)
@@ -449,6 +463,47 @@ impl RealForwardRunner {
             });
         }
         let tower = self.qwen25_vision.as_mut().expect("opened just above");
+        tower.run(&mut self.context, &self.weights, image, params, capture)
+    }
+
+    /// The Qwen2-VL arm of [`Self::encode_image`]: the same
+    /// [`crate::vision::VisionEmbedding`], so the prompt builders and
+    /// [`Self::set_prompt_vision`] are shared with the qwen3 and 2.5 towers.
+    fn encode_image_qwen2(
+        &mut self,
+        image: &turbospark_vision_io::PreprocessedImage,
+        params: &turbospark_vision_io::PreprocessParams,
+        capture: Option<crate::vision::VisionStages>,
+    ) -> Result<
+        (
+            crate::vision::VisionEmbedding,
+            Option<crate::vision::VisionStages>,
+        ),
+        RealForwardError,
+    > {
+        if !self.arch.vision.is_active() {
+            return Err(RealForwardError::Unsupported(
+                "this install declares no vision tower; repack the checkpoint with its \
+                 vision_tower.* tensors to get one"
+                    .to_string(),
+            ));
+        }
+        if self.qwen2_vision.is_none() {
+            self.qwen2_vision = Some(match &self.vision_sidecar_dir {
+                Some(dir) => crate::vision::qwen2::Qwen2VisionTower::open_with_sidecar(
+                    dir,
+                    &self.context,
+                    &self.arch,
+                )?,
+                None => crate::vision::qwen2::Qwen2VisionTower::open(
+                    &self.install_dir,
+                    &self.context,
+                    &self.index,
+                    &self.arch,
+                )?,
+            });
+        }
+        let tower = self.qwen2_vision.as_mut().expect("opened just above");
         tower.run(&mut self.context, &self.weights, image, params, capture)
     }
 
@@ -722,6 +777,7 @@ impl RealForwardRunner {
             .as_ref()
             .map(|v| v.is_sidecar())
             .or_else(|| self.qwen25_vision.as_ref().map(|v| v.is_sidecar()))
+            .or_else(|| self.qwen2_vision.as_ref().map(|v| v.is_sidecar()))
             .or_else(|| self.muse_vision.as_ref().map(|v| v.is_sidecar()))
     }
 
@@ -754,6 +810,7 @@ impl RealForwardRunner {
         self.vision = None;
         self.gemma4_vision = None;
         self.qwen25_vision = None;
+        self.qwen2_vision = None;
         self.lfm3_vision = None;
         self.clip_vision = None;
         self.muse_vision = None;
@@ -762,6 +819,8 @@ impl RealForwardRunner {
         self.siglip_vision = None;
         self.deepseek_ocr_vision = None;
         self.onevision_vision = None;
+        self.internvl_vision = None;
+        self.idefics3_vision = None;
     }
 
     /// `(marker, fill)` for a LLaVA prompt, read off the install, or `None`
@@ -1111,9 +1170,12 @@ impl RealForwardRunner {
                 | model_io::VisionTowerKind::SigLip
                 | model_io::VisionTowerKind::DeepseekOcr
                 | model_io::VisionTowerKind::SigLipOv
+                | model_io::VisionTowerKind::InternViT
+                | model_io::VisionTowerKind::SigLipNaViT
         ) {
             return Err(RealForwardError::Unsupported(
-                "set_prompt_vision_flat needs a CLIP, Pixtral, SigLIP, OneVision or DeepSeek-OCR vision tower"
+                "set_prompt_vision_flat needs a CLIP, Pixtral, SigLIP, OneVision, DeepSeek-OCR, \
+                 InternViT or siglip_navit vision tower"
                     .to_string(),
             ));
         }
@@ -1147,6 +1209,171 @@ impl RealForwardRunner {
         let v = &self.arch.vision;
         (v.is_active() && v.tower == model_io::VisionTowerKind::MuseGlimmer)
             .then_some((v.vision_start_token_id as i32, v.vision_end_token_id as i32))
+    }
+
+    /// The `<IMG_CONTEXT>` id (the manifest's `image_token_id`) for an
+    /// InternViT install, or `None` when its tower is not an InternViT one.
+    ///
+    /// `<img>` / `</img>` are not returned: they are tokenizer-resolved rather
+    /// than config-declared (the manifest records zero), so `attach_internvl`
+    /// resolves them by token text. The span the expansion builds is
+    /// `[img_start] + [img_context] * count + [img_end]`.
+    pub fn internvl_image_ids(&self) -> Option<i32> {
+        let v = &self.arch.vision;
+        (v.is_active() && v.tower == model_io::VisionTowerKind::InternViT)
+            .then_some(v.image_token_id as i32)
+    }
+
+    /// Encode one image through this install's InternViT tower
+    /// (`docs/INTERNVL_VISION_PHASE0.md`): `[total_tokens, text_hidden]` FP16
+    /// bits, every tile's projector rows in tile order, the whole run that
+    /// replaces the `<IMG_CONTEXT>` placeholders between one `<img>` and
+    /// `</img>` pair. Inject the rows with [`Self::set_prompt_vision_flat`].
+    ///
+    /// Combined installs only: the sidecar pairing record names no InternViT
+    /// kind yet, so an attached sidecar is refused by name rather than opened
+    /// against the wrong weights.
+    pub fn encode_image_internvl(
+        &mut self,
+        tiles: &turbospark_vision_io::InternVlTiles,
+    ) -> Result<Vec<u16>, RealForwardError> {
+        if self.arch.vision.tower != model_io::VisionTowerKind::InternViT
+            || !self.arch.vision.is_active()
+        {
+            return Err(RealForwardError::Unsupported(
+                "this install declares no InternViT vision tower".to_string(),
+            ));
+        }
+        if self.vision_sidecar_dir.is_some() {
+            return Err(RealForwardError::Unsupported(
+                "an internvit vision tower cannot run from a sidecar yet".to_string(),
+            ));
+        }
+        if self.internvl_vision.is_none() {
+            self.internvl_vision = Some(crate::vision::internvl::InternVlVisionTower::open(
+                &self.install_dir,
+                &self.context,
+                &self.weights,
+                &self.index,
+                &self.arch,
+            )?);
+        }
+        let tower = self.internvl_vision.as_mut().expect("opened just above");
+        tower.run(&mut self.context, &self.weights, tiles)
+    }
+
+    /// The `<image>` id (the manifest's `image_token_id`) for an Idefics3 /
+    /// SmolVLM install, or `None` when its tower is another kind.
+    pub fn idefics3_image_ids(&self) -> Option<i32> {
+        let v = &self.arch.vision;
+        (v.is_active() && v.tower == model_io::VisionTowerKind::SigLipNaViT)
+            .then_some(v.image_token_id as i32)
+    }
+
+    /// Encode one image through this install's Idefics3 / SmolVLM tower
+    /// (`docs/IDEFICS3_VISION_PHASE0.md`): `[frames * tokens, text_hidden]`
+    /// FP16 bits in frame order. Each frame replaces its own `<image>` run,
+    /// so hand [`Self::set_prompt_vision_flat`] one slice per span.
+    ///
+    /// Combined installs only: a sidecar is refused by name.
+    pub fn encode_image_idefics3(
+        &mut self,
+        tiles: &turbospark_vision_io::Idefics3Tiles,
+    ) -> Result<Vec<u16>, RealForwardError> {
+        if self.idefics3_image_ids().is_none() {
+            return Err(RealForwardError::Unsupported(
+                "this install declares no siglip_navit vision tower".to_string(),
+            ));
+        }
+        if self.vision_sidecar_dir.is_some() {
+            return Err(RealForwardError::Unsupported(
+                "a siglip_navit vision tower cannot run from a sidecar yet".to_string(),
+            ));
+        }
+        if self.idefics3_vision.is_none() {
+            self.idefics3_vision = Some(crate::vision::idefics3::Idefics3VisionTower::open(
+                &self.install_dir,
+                &self.context,
+                &self.index,
+                &self.arch,
+            )?);
+        }
+        let tower = self.idefics3_vision.as_mut().expect("opened just above");
+        tower.run(&mut self.context, &self.weights, tiles)
+    }
+
+    /// One Idefics3 / SmolVLM turn, end to end: read the processor settings
+    /// beside the tower, tile each decoded image, expand each rendered
+    /// `<image>` into the reference's tile spans, run the tower and set the
+    /// injection map. Returns the expanded ids to prefill.
+    ///
+    /// `fake_id` is the tokenizer's `<fake_token_around_image>`; `encode`
+    /// tokenizes one literal separator (`<global-img>`, a row tag, newlines)
+    /// without BOS. Both come from the caller because this crate holds no
+    /// tokenizer. `images` are `(label for errors, pixels)`.
+    pub fn attach_idefics3<E: std::fmt::Display>(
+        &mut self,
+        rendered: &[i32],
+        fake_id: i32,
+        images: &[(String, turbospark_vision_io::Rgb8Image)],
+        encode: impl FnMut(&str) -> Result<Vec<i32>, E>,
+    ) -> Result<Vec<i32>, RealForwardError> {
+        let bad = RealForwardError::Unsupported;
+        let image_id = self
+            .idefics3_image_ids()
+            .ok_or_else(|| bad("this install declares no siglip_navit vision tower".to_string()))?;
+        let path = self.vision_dir().join("preprocessor_config.json");
+        let json =
+            std::fs::read_to_string(&path).map_err(|e| bad(format!("{}: {e}", path.display())))?;
+        let params = turbospark_vision_io::Idefics3Params::from_preprocessor_config_json(&json)
+            .map_err(|e| bad(format!("{}: {e}", path.display())))?;
+        let v = &self.arch.vision;
+        let patch = v.patch_size as usize;
+        let side = (v.num_position_embeddings as f64).sqrt().round() as usize;
+        let merge = (v.spatial_merge_size as usize).max(1);
+        if patch == 0 || params.tile / patch != side {
+            return Err(bad(format!(
+                "{}: a {}-pixel tile against patch {patch} does not give the position \
+                 table's {side}-wide grid; the two describe different checkpoints",
+                path.display(),
+                params.tile
+            )));
+        }
+        let seq_len = (side / merge) * (side / merge);
+        let row_values = seq_len * v.out_hidden_size as usize;
+
+        let mut prepared = Vec::with_capacity(images.len());
+        for (label, image) in images {
+            let tiles = turbospark_vision_io::idefics3_preprocess(image, patch, &params)
+                .map_err(|e| bad(format!("{label}: {e}")))?;
+            prepared.push((label, tiles));
+        }
+        let layouts: Vec<(usize, usize)> = prepared.iter().map(|(_, t)| (t.rows, t.cols)).collect();
+        let (expanded, spans) = turbospark_vision_io::idefics3_expand_prompt(
+            rendered, image_id, fake_id, &layouts, seq_len, encode,
+        )
+        .map_err(|e| {
+            bad(format!(
+                "cannot place {} image(s) in this prompt: {e}",
+                images.len()
+            ))
+        })?;
+        // One row slice per frame, in the spans' order.
+        let mut frames = Vec::with_capacity(spans.len());
+        for (label, tiles) in &prepared {
+            let rows = self.encode_image_idefics3(tiles)?;
+            if rows.len() != tiles.frames * row_values {
+                return Err(bad(format!(
+                    "{label}: the tower produced {} row values for {} frame(s) of {seq_len} \
+                     tokens",
+                    rows.len(),
+                    tiles.frames
+                )));
+            }
+            frames.extend(rows.chunks_exact(row_values).map(<[u16]>::to_vec));
+        }
+        self.set_prompt_vision_flat(&frames, &spans, expanded.len())?;
+        Ok(expanded)
     }
 
     /// The three ids a Gemma 4 image occupies in a prompt, read off the
@@ -1215,6 +1442,11 @@ fn qwen_tower_only(vision: &model_io::VisionConfig) -> Result<(), RealForwardErr
         model_io::VisionTowerKind::Qwen25Vl => Err(RealForwardError::Unsupported(
             "this install's vision tower is qwen25_vl; it opens through encode_image, which \
              routes to the Qwen2.5-VL tower"
+                .to_string(),
+        )),
+        model_io::VisionTowerKind::Qwen2Vl => Err(RealForwardError::Unsupported(
+            "this install's vision tower is qwen2_vl; it opens through encode_image, which \
+             routes to the Qwen2-VL tower"
                 .to_string(),
         )),
         other => Err(RealForwardError::Unsupported(format!(

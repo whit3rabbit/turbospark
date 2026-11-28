@@ -354,6 +354,11 @@ impl ChatModel for FfiChatModel {
             let Engine::Real(runner) = &*engine else {
                 return None;
             };
+            // No server splice for the Idefics3 / SmolVLM prompt layout yet.
+            // `ts_generate` serves their images; this server refuses them.
+            if runner.idefics3_image_ids().is_some() {
+                return None;
+            }
             if let Some(ids) = runner.unlimited_ocr2_image_ids() {
                 return Some(turbospark_server::vision::VisionInfo::UnlimitedOcr2 { ids });
             }
@@ -388,14 +393,9 @@ impl ChatModel for FfiChatModel {
                 let params =
                     turbospark_vision_io::MiniCpmParams::from_preprocessor_config_json(&json)
                         .ok()?;
-                let v = runner.vision_config();
                 return Some(turbospark_server::vision::VisionInfo::MiniCpm {
                     params,
-                    ids: turbospark_vision_io::MiniCpmIds::new(
-                        v.image_token_id as i32,
-                        v.vision_start_token_id as i32,
-                        v.vision_end_token_id as i32,
-                    ),
+                    ids: runner.minicpm_ids(),
                 });
             }
             if let Some((marker, fill)) = runner.siglip_image_ids() {

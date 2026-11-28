@@ -507,14 +507,9 @@ impl RealChatModel {
                 std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
             let params = turbospark_vision_io::MiniCpmParams::from_preprocessor_config_json(&json)
                 .map_err(|e| format!("{}: {e}", path.display()))?;
-            let v = runner.vision_config();
             Some(crate::vision::VisionInfo::MiniCpm {
                 params,
-                ids: turbospark_vision_io::MiniCpmIds::new(
-                    v.image_token_id as i32,
-                    v.vision_start_token_id as i32,
-                    v.vision_end_token_id as i32,
-                ),
+                ids: runner.minicpm_ids(),
             })
         } else if let Some((marker, fill)) = runner.siglip_image_ids() {
             // DeepSeek-VL2 reads its tiling from `processor_config.json` beside
@@ -560,6 +555,10 @@ impl RealChatModel {
                 marker,
                 fill,
             })
+        } else if runner.idefics3_image_ids().is_some() {
+            // No server splice for the Idefics3 / SmolVLM prompt layout yet,
+            // so images are refused rather than run through another tower's.
+            None
         } else if runner.has_vision_tower() {
             let v = runner.vision_config();
             preprocess_params

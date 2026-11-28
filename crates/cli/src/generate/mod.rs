@@ -338,6 +338,12 @@ fn run_messages_file(request: &InvocationRequest, path: &str) -> Outcome {
                 }
             }
         };
+        // The InternVL templates differ in what they can spell: the `internvl_chat`
+        // checkpoints' own template is text-only, so an image turn's parts are
+        // flattened into the `<img>` markers its processor would have written
+        // (`crates/cli/src/generate/vision.rs::flatten_internvl_parts`); every
+        // non-InternViT conversation is returned unchanged.
+        let turn_messages = vision::flatten_internvl_parts(&session, &turn_messages);
         if let Err(e) = run_one_turn(&mut session, request, &turn_messages, turn_images) {
             eprintln!("note: {e}");
             return Outcome::Failed;
@@ -385,6 +391,10 @@ fn run_one_turn(
             vision::attach_siglip(session, &rendered, images)?
         } else if session.runner.deepseek_ocr_image_ids().is_some() {
             vision::attach_deepseek_ocr(session, &rendered, images)?
+        } else if session.runner.internvl_image_ids().is_some() {
+            vision::attach_internvl(session, &rendered, images)?
+        } else if session.runner.idefics3_image_ids().is_some() {
+            vision::attach_idefics3(session, &rendered, images)?
         } else {
             let params = vision::preprocess_params(session)?;
             let prepared = vision::prepare_images(images, &params)?;

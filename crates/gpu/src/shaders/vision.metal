@@ -1355,3 +1355,28 @@ kernel void vision_attention_relpos_fp16(
         orow[d] = half(total * inv_denom);
     }
 }
+
+// ----------------------------------------------------------------------------
+// The InternViT tower's layer scale (`docs/INTERNVL_VISION_PHASE0.md`):
+// `y += x * s` where `s` is one `[width]` FP16 row (the checkpoint's
+// `ls1`/`ls2` per-block vector) applied per channel over `rows` rows.
+//
+// Port-local (no Swift original): the qwen tower this file was written for
+// has no layer scale, and the three shapes it would otherwise decompose into
+// (a broadcast copy of `s` to `[rows, width]`, an elementwise multiply, and
+// the plain residual add) each pay a full pass over `[rows, width]` to move
+// data the fused form never materializes. Same FP32 intermediate as
+// `vision_residual_add_fp16`.
+// ----------------------------------------------------------------------------
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void vision_residual_scaled_add_fp16(
+    device half*        y     [[buffer(0)]],
+    device const half*  x     [[buffer(1)]],
+    device const half*  s     [[buffer(2)]],
+    constant uint&      width [[buffer(3)]],
+    constant uint&      count [[buffer(4)]],
+    uint                tid   [[thread_position_in_grid]]
+) {
+    if (tid >= count) return;
+    y[tid] = half(float(y[tid]) + float(x[tid]) * float(s[tid % width]));
+}

@@ -298,6 +298,16 @@ const SUPPORTED_HF: &[(&str, ModelFamily)] = &[
     // root beside `vision_config`, so it resolves to the same family and the
     // tower is carried by `VisionConfig` (`VisionTowerKind::Qwen25Vl`).
     ("qwen2_5_vl", ModelFamily::Qwen2Dense),
+    // Qwen2-VL, the pre-2.5 sibling of the row above. Read off
+    // `mlx-community/Qwen2-VL-2B-Instruct-4bit` @
+    // 01af461cdb9574acc09084a0ef94e216e142b085, whose root `model_type` is
+    // `qwen2_vl` and whose flat trunk keys are the plain `qwen2` form this
+    // family's parser reads (28 layers, hidden 1536, kv 2, rope_scaling
+    // `mrope`). Exact equality, like every row here: `qwen2` must never
+    // absorb this string or the reverse, and `qwen2_5_vl` never matches it
+    // because the lookup compares whole strings. Its tower is
+    // `VisionTowerKind::Qwen2Vl` (`docs/QWEN2VL_VISION_PHASE0.md`).
+    ("qwen2_vl", ModelFamily::Qwen2Dense),
     // DeepSeek-VL2 (`mlx-community/deepseek-vl2-tiny-4bit`): the wrapper's
     // text model is a DeepSeekMoE trunk with plain attention, run by the
     // `deepseek2` flow's MHA arm (`ArchConfig::mla` inactive).
@@ -345,6 +355,15 @@ const SUPPORTED_HF: &[(&str, ModelFamily)] = &[
     // `llama`, so a wrapper whose `text_config.model_type` is `llama` (LLaVA)
     // resolves here and is then refused by the parser, not installed.
     ("llama", ModelFamily::Llama),
+    // The Idefics3 / SmolVLM wrappers over a llama trunk, the one wrapper
+    // the llama parser reads (`docs/IDEFICS3_VISION_PHASE0.md`). Every
+    // published mlx-community build read says `idefics3` at the root with
+    // `text_config.model_type` `llama`
+    // (`mlx-community/SmolVLM-256M-Instruct-4bit`,
+    // `mlx-community/Idefics3-8B-Llama3-4bit`); `smolvlm` is the string the
+    // upstream config class registers.
+    ("idefics3", ModelFamily::Llama),
+    ("smolvlm", ModelFamily::Llama),
     // Mistral 7B v0.2+ is the llama graph under its own string. Read off
     // `mistralai/Mistral-7B-Instruct-v0.2` @
     // 63a8b081895390a26e140280378bc85ec8bce07a (`sliding_window: null`; v0.1's
@@ -368,6 +387,30 @@ const SUPPORTED_HF: &[(&str, ModelFamily)] = &[
     // graph (no sliding window, no sandwich norms, no output gate) and stays
     // unregistered.
     ("lfm3", ModelFamily::Lfm3),
+    // The VL wrapper's own root string. Read off
+    // `LiquidAI/LFM3-VL-2B-MLX-8bit` @ 6990b981e8235d1a41a3aa3c50b3402631659abb,
+    // root `model_type` `lfm3_vl` with `text_config.model_type` `lfm3`. The
+    // row does not change what resolves (the text_config fallback found the
+    // trunk first, which is how every real VL install to date went through),
+    // it makes the wrapper explicit instead of a fallback accident, and it
+    // closes the open question the vision audit recorded about this string.
+    ("lfm3_vl", ModelFamily::Lfm3),
+    // The omni wrapper over that same trunk. Read off
+    // `LiquidAI/LFM3-Omni-2B-MLX-8bit` @ 5901d16cbc5f1774243db907cd407f825591f743,
+    // whose root `model_type` is `lfm3_omni` and whose `text_config.model_type`
+    // is `lfm3` (the same 24-layer trunk fields the LFM3-VL-2B rows resolve);
+    // the unquantized `LiquidAI/LFM3-Omni-2B` @ c01718a568e53ae936e6b5e1ff5ab2de7d7f388b
+    // reports the same pair. Its `vision_config` is the `lfm3_vl_vision` tower
+    // byte for byte, so the IMAGE half installs through the existing `lfm3`
+    // trunk and `VisionTowerKind::Lfm3Vl` reader. The AUDIO half
+    // (`audio_encoder_config`, `depth_config`, and the `audio_tower.` /
+    // `audio_projector.` / `depth_decoder.` / `codebook_embedding.` tensors)
+    // is LFM3-Audio's and has no path here: the vision reader refuses an
+    // audio section that is not the published shape, and the walk drops the
+    // audio tensors by name rather than ingesting any of them. Exact
+    // equality, like every row above: `lfm3` must never absorb this string
+    // or the reverse.
+    ("lfm3_omni", ModelFamily::Lfm3),
 ];
 
 /// GGUF architectures this port recognizes and cannot run.

@@ -127,6 +127,24 @@ pub(crate) fn attach_images<'a>(
             let spliced = crate::vision::attach_deepseek_ocr(runner.as_mut(), rendered, parts)?;
             return Ok((spliced, VisionScope::armed(engine)));
         }
+        if runner.idefics3_image_ids().is_some() {
+            let spliced = crate::vision::attach_idefics3(
+                runner.as_mut(),
+                &session.tokenizer,
+                rendered,
+                parts,
+            )?;
+            return Ok((spliced, VisionScope::armed(engine)));
+        }
+        if runner.internvl_image_ids().is_some() {
+            let spliced = crate::vision::attach_internvl(
+                runner.as_mut(),
+                &session.tokenizer,
+                rendered,
+                parts,
+            )?;
+            return Ok((spliced, VisionScope::armed(engine)));
+        }
         let params = crate::vision::preprocess_params(
             runner,
             session.load_policy.guard,

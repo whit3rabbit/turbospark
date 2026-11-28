@@ -1,7 +1,11 @@
 //! The LFM3-VL vision tower's config and ingest (`docs/LFM3_VL_VISION_PHASE0.md`).
 //!
 //! A sibling of [`super::vision`] and [`super::vision_gemma4`], not a variant
-//! of either. The tower alternates two block kinds, so a blob's role set
+//! of either. The config half also serves the `lfm3_omni` checkpoints, whose
+//! `vision_config` and projector fields are the VL ones verbatim and whose
+//! audio half is refused by name (see [`LFM3_OMNI_AUDIO_TENSOR_PREFIXES`]).
+//!
+//! The tower alternates two block kinds, so a blob's role set
 //! depends on the block:
 //!
 //! - every block: `operator_norm`, `ffn_norm` (RMSNorm) and a SwiGLU MLP
@@ -42,6 +46,77 @@ use crate::resident_writer::{RawTensorSpec, ResidentEntrySpec};
 
 /// The projector's checkpoint prefix, beside the tower's rather than under it.
 pub const LFM3_PROJECTOR_PREFIX: &str = "multi_modal_projector.";
+
+/// The root `model_type` of the LFM3-Omni checkpoints
+/// (`LiquidAI/LFM3-Omni-2B-MLX-8bit` @ 5901d16c, unquantized
+/// `LiquidAI/LFM3-Omni-2B` @ c01718a5). The plain-VL string sits beside it:
+/// `lfm3_vl` for the VL wrappers, and a bare `lfm3` trunk config is refused
+/// here because it belongs to the text-only parser.
+pub const LFM3_VL_MODEL_TYPE: &str = "lfm3_vl";
+pub const LFM3_OMNI_MODEL_TYPE: &str = "lfm3_omni";
+
+/// The vision span ids an omni config does NOT declare. The VL config carries
+/// `vision_start_token_id` / `vision_end_token_id` at the root; the omni
+/// configs drop the two keys (checked against the 8-bit, 4-bit and bf16
+/// builds) while keeping the same tokenizer: `LiquidAI/LFM3-Omni-2B`'s
+/// `tokenizer.json` maps `<|vision_start|>` to 125009 and `<|vision_end|>` to
+/// 125010, the exact ids the VL config declares, and the omni chat template
+/// renders the same `<|vision_start|><|image|><|vision_end|>` span. So the
+/// omni branch defaults to those two ids when absent, and a config that
+/// declares OTHER values still wins; the mRoPE walk counts
+/// start-then-placeholder pairs, so a wrong id here would find no images and
+/// refuse, never mis-read one.
+const LFM3_OMNI_DEFAULT_VISION_START_TOKEN_ID: i64 = 125_009;
+const LFM3_OMNI_DEFAULT_VISION_END_TOKEN_ID: i64 = 125_010;
+
+/// The audio sections an omni config carries beside its `vision_config`, each
+/// with the `model_type` the published configs name inside it: the LFM3-Audio
+/// encoder's own block and the MaskGIT depth decoder the talker reads. Read
+/// off `LiquidAI/LFM3-Omni-2B-MLX-8bit` @ 5901d16c; the reference
+/// `ModelConfig.__post_init__` refuses an omni config without both, and so
+/// does this reader. The values are checked and then never ingested: no
+/// field of an audio section reaches a [`VisionConfig`].
+pub const LFM3_OMNI_AUDIO_CONFIG_SECTIONS: [(&str, &str); 2] = [
+    ("audio_encoder_config", "lfm3_omni_encoder"),
+    ("depth_config", "lfm3"),
+];
+
+/// The tensor prefixes the omni audio half carries, read off the published
+/// `model.safetensors.index.json` of `LiquidAI/LFM3-Omni-2B-MLX-8bit`
+/// @ 5901d16c (the audio tower's 170 tensors, the audio projector's 6, the
+/// depth decoder's 64 and the codebook embedding: 241 in all). This port has
+/// no LFM3-Audio path: classification drops every one of these by name and
+/// the streamed writer reports the drop, so an omni install is image-only by
+/// construction rather than by luck.
+pub const LFM3_OMNI_AUDIO_TENSOR_PREFIXES: [&str; 4] = [
+    "audio_tower.",
+    "audio_projector.",
+    "depth_decoder.",
+    "codebook_embedding.",
+];
+
+/// Root keys a D1 DECISION model's config may carry. A decision model
+/// (`LiquidAI/d1-Omni-2B`) declares the same root `model_type`, trunk fields
+/// and `vision_config` as the chat checkpoint, so installed through the chat
+/// flow it would decode fluently and wrongly. Every key is optional in the
+/// reference (mlx-vlm `d1_lfm3_vl/config.py`, which also defines the two the
+/// published 2B file does not set), so the class check in
+/// [`refuse_lfm3_omni_d1`] is the primary discriminator and these are the
+/// backstop.
+pub const LFM3_OMNI_D1_KEYS: [&str; 7] = [
+    "d1_attention",
+    "d1_box_edges",
+    "d1_codes",
+    "d1_numbers",
+    "d1_prompt",
+    "d1_set_size",
+    "d1_vision_max_pixels",
+];
+
+/// The model class of a D1 checkpoint, as `architectures` names it and as
+/// `auto_map.AutoModel` ends. This is how the reference loader selects D1
+/// (mlx-vlm `utils.py::get_model_type`), for `lfm3_vl` and `lfm3_omni` alike.
+const D1_MODEL_CLASS: &str = "D1Model";
 
 /// Where a block's tensors live under [`VISION_PREFIX`].
 const BLOCK_PATH: &str = "layers.";
@@ -91,7 +166,95 @@ pub const LFM3_PROJECTOR_INSTALL_LEVEL: &str = "projector.";
 /// The only depth a published LFM3-VL tower declares.
 const SUPPORTED_DEPTHS: [i64; 1] = [14];
 
+/// Refuse an `lfm3_omni` config whose audio half is not the published shape.
+///
+/// The audio sections are REQUIRED to be present and to name the published
+/// models, for two reasons that point the same way. First, the reference
+/// config's own `__post_init__` refuses an omni config without them, so a
+/// config that lacks one is not a checkpoint this port has ever seen.
+/// Second, their presence is what makes the audio REFUSAL explicit rather
+/// than silent: this reader derives nothing from either section, the walk
+/// drops the audio tensors by name ([`LFM3_OMNI_AUDIO_TENSOR_PREFIXES`]), and
+/// the install that comes out is image-only because audio intake was refused
+/// at every door, not because the sections went unread.
+///
+/// The error names the audio section, per the same rule every refusal here
+/// follows: a publisher who changed the audio half has changed the
+/// checkpoint, and a reader that ignored that would install a tower beside
+/// an audio model it cannot describe.
+fn refuse_foreign_lfm3_omni_audio(root: &serde_json::Value) -> Result<(), Gemma4Error> {
+    let unsupported = |section: &str, detail: String| Gemma4Error::UnsupportedTensor {
+        tensor: section.to_string(),
+        detail,
+    };
+    for (section, model_type) in LFM3_OMNI_AUDIO_CONFIG_SECTIONS {
+        let body = root.get(section).ok_or_else(|| {
+            unsupported(
+                section,
+                "the published lfm3_omni checkpoints carry this audio section; a config \
+                 without it is a shape this port has never seen"
+                    .into(),
+            )
+        })?;
+        if body.get("model_type").and_then(|v| v.as_str()) != Some(model_type) {
+            return Err(unsupported(
+                section,
+                format!(
+                    "model_type {:?} is not the published {model_type}",
+                    body.get("model_type").and_then(|v| v.as_str())
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Refuse a D1 decision model wearing the `lfm3_vl` or `lfm3_omni` string.
+/// `architectures` is read here only to REFUSE; family resolution still
+/// ignores it.
+///
+/// Public because the trunk parser (`lfm3_config::parse_lfm3_config`) is the
+/// FIRST gate every install flow passes through, and it must refuse a
+/// decision model before its fields are ever read as a chat trunk's.
+pub fn refuse_lfm3_omni_d1(root: &serde_json::Value) -> Result<(), Gemma4Error> {
+    let by_class = root
+        .get("architectures")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|a| a.iter().any(|v| v.as_str() == Some(D1_MODEL_CLASS)))
+        || root
+            .get("auto_map")
+            .and_then(|m| m.get("AutoModel"))
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|m| m.ends_with(D1_MODEL_CLASS));
+    let marker = if by_class {
+        Some(D1_MODEL_CLASS)
+    } else {
+        LFM3_OMNI_D1_KEYS
+            .into_iter()
+            .find(|k| root.get(k).is_some_and(|v| !v.is_null()))
+    };
+    match marker {
+        None => Ok(()),
+        Some(marker) => Err(Gemma4Error::Config(format!(
+            "config.json carries {marker}: this checkpoint is a D1 decision model \
+             (LiquidAI/d1-Omni-2B), which answers through set-attention readout and has \
+             no generation path on this port; refusing rather than installing it as a chat \
+             lfm3 trunk"
+        ))),
+    }
+}
+
 /// Parse an LFM3-VL `config.json`'s vision half into a [`VisionConfig`].
+///
+/// Accepts BOTH wrappers the family resolves to: the `lfm3_vl` checkpoints
+/// and the `lfm3_omni` ones, whose `vision_config` and projector fields are
+/// the same nesting (the omni config is LFM3-VL's plus the audio sections
+/// `refuse_foreign_lfm3_omni_audio` checks and refuses to ingest). Any OTHER
+/// root `model_type` is refused by name: a plain `lfm3` trunk config has no
+/// tower here, and an unknown wrapper is a checkpoint this reader has never
+/// seen. A config that omits `model_type` entirely keeps the old behavior --
+/// the trimmed fixtures in tests do, and the caller has already routed by
+/// family.
 ///
 /// Absent `vision_config` is [`VisionConfig::NONE`]. Every value the runtime
 /// does not store is checked here and refused when it differs from the one
@@ -101,11 +264,35 @@ const SUPPORTED_DEPTHS: [i64; 1] = [14];
 pub fn parse_lfm3_vl_vision_config(json: &str) -> Result<VisionConfig, Gemma4Error> {
     let root: serde_json::Value =
         serde_json::from_str(json).map_err(|e| Gemma4Error::Config(e.to_string()))?;
+    let bad = |m: String| Gemma4Error::Config(m);
+    refuse_lfm3_omni_d1(&root)?;
+    let is_omni = match root.get("model_type").and_then(|v| v.as_str()) {
+        None | Some(LFM3_VL_MODEL_TYPE) => false,
+        Some(LFM3_OMNI_MODEL_TYPE) => {
+            refuse_foreign_lfm3_omni_audio(&root)?;
+            true
+        }
+        Some(other) => {
+            return Err(bad(format!(
+                "config.json model_type {other:?} is neither {LFM3_VL_MODEL_TYPE} nor \
+                 {LFM3_OMNI_MODEL_TYPE}; this reader accepts only the two wrappers the \
+                 published LiquidAI checkpoints use"
+            )))
+        }
+    };
     let vc = match root.get("vision_config") {
-        None | Some(serde_json::Value::Null) => return Ok(VisionConfig::NONE),
+        None | Some(serde_json::Value::Null) => {
+            if is_omni {
+                return Err(bad(
+                    "an lfm3_omni config without vision_config is not a checkpoint this port \
+                     has seen; the published ones all declare the lfm3_vl_vision tower"
+                        .into(),
+                ));
+            }
+            return Ok(VisionConfig::NONE);
+        }
         Some(v) => v,
     };
-    let bad = |m: String| Gemma4Error::Config(m);
     let vi = |k: &str| -> Result<i64, Gemma4Error> {
         vc.get(k)
             .and_then(serde_json::Value::as_i64)
@@ -209,6 +396,23 @@ pub fn parse_lfm3_vl_vision_config(json: &str) -> Result<VisionConfig, Gemma4Err
         return Err(bad("projector_hidden_size must be 4096".into()));
     }
 
+    // The span ids. The VL configs declare both at the root; the omni configs
+    // declare neither and take the tokenizer's ids, which are the same two
+    // numbers (`LFM3_OMNI_DEFAULT_VISION_*`'s doc). A config that declares a
+    // different value still wins over the default.
+    // Only an ABSENT (or null) key defaults: a declared non-integer refuses.
+    let span_id = |key: &str, omni_default: i64| -> Result<i64, Gemma4Error> {
+        if is_omni && root.get(key).is_none_or(serde_json::Value::is_null) {
+            Ok(omni_default)
+        } else {
+            ri(key)
+        }
+    };
+    let vision_start = span_id(
+        "vision_start_token_id",
+        LFM3_OMNI_DEFAULT_VISION_START_TOKEN_ID,
+    )?;
+    let vision_end = span_id("vision_end_token_id", LFM3_OMNI_DEFAULT_VISION_END_TOKEN_ID)?;
     let vision = VisionConfig {
         depth,
         hidden_size: hidden,
@@ -222,8 +426,8 @@ pub fn parse_lfm3_vl_vision_config(json: &str) -> Result<VisionConfig, Gemma4Err
         out_hidden_size: text_hidden,
         mrope_section: [0, 0, 0],
         deepstack_visual_indexes: Vec::new(),
-        vision_start_token_id: ri("vision_start_token_id")?,
-        vision_end_token_id: ri("vision_end_token_id")?,
+        vision_start_token_id: vision_start,
+        vision_end_token_id: vision_end,
         image_token_id: ri("image_token_id")?,
         video_token_id: ri("video_token_id")?,
         tower: VisionTowerKind::Lfm3Vl,
@@ -657,6 +861,220 @@ mod tests {
             parse_lfm3_vl_vision_config(&c.to_string()).unwrap(),
             VisionConfig::NONE
         );
+    }
+
+    /// The real omni checkpoint's config, trimmed to the keys this parser
+    /// reads, with values from `LiquidAI/LFM3-Omni-2B-MLX-8bit@5901d16c`.
+    /// The tower half is the VL config's; the audio sections are the omni
+    /// additions this reader checks and refuses to ingest; and the two span
+    /// ids the VL config declares at the root are ABSENT, as published (the
+    /// 8-bit, 4-bit and bf16 builds all drop them).
+    fn real_omni_config() -> serde_json::Value {
+        let mut c = real_config();
+        c["model_type"] = "lfm3_omni".into();
+        let obj = c.as_object_mut().unwrap();
+        obj.remove("vision_start_token_id");
+        obj.remove("vision_end_token_id");
+        c["audio_encoder_config"] = serde_json::json!({
+            "model_type": "lfm3_omni_encoder",
+            "hidden_size": 768,
+            "num_mel_bins": 128,
+        });
+        c["depth_config"] = serde_json::json!({
+            "model_type": "lfm3",
+            "hidden_size": 1024,
+            "num_hidden_layers": 3,
+        });
+        c
+    }
+
+    /// THE omni claim: the wrapper's tower config equals the VL one field for
+    /// field, with the two span ids the omni config omits defaulting to the
+    /// ids its own tokenizer carries (125009 / 125010, the same numbers the
+    /// VL config declares).
+    #[test]
+    fn the_real_omni_config_parses_to_the_same_lfm3_vl_tower() {
+        let omni = parse_lfm3_vl_vision_config(&real_omni_config().to_string()).unwrap();
+        let vl = parse_lfm3_vl_vision_config(&real_config().to_string()).unwrap();
+        assert_eq!(omni, vl);
+        assert_eq!(omni.tower, VisionTowerKind::Lfm3Vl);
+        assert_eq!(
+            (
+                omni.vision_start_token_id,
+                omni.vision_end_token_id,
+                omni.image_token_id
+            ),
+            (125_009, 125_010, 125_030)
+        );
+    }
+
+    /// A config that declares DIFFERENT span ids wins over the defaults: the
+    /// omni default exists because the published configs omit the keys, not
+    /// to override a publisher.
+    #[test]
+    fn an_omni_config_that_declares_span_ids_keeps_them() {
+        let mut c = real_omni_config();
+        c["vision_start_token_id"] = 7.into();
+        c["vision_end_token_id"] = 8.into();
+        let v = parse_lfm3_vl_vision_config(&c.to_string()).unwrap();
+        assert_eq!((v.vision_start_token_id, v.vision_end_token_id), (7, 8));
+        // A declared value that is not an integer is not "absent".
+        c["vision_end_token_id"] = "125010".into();
+        let e = parse_lfm3_vl_vision_config(&c.to_string()).expect_err("string id");
+        assert!(e.to_string().contains("vision_end_token_id"), "{e}");
+    }
+
+    #[test]
+    fn an_omni_config_without_a_vision_config_is_refused() {
+        let mut c = real_omni_config();
+        c.as_object_mut().unwrap().remove("vision_config");
+        let e = parse_lfm3_vl_vision_config(&c.to_string()).expect_err("no tower");
+        assert!(e.to_string().contains("vision_config"), "{e}");
+    }
+
+    /// The published `d1-Omni-2B` and the reference loader both identify a
+    /// decision model by its class, and every `d1_*` key is optional there.
+    #[test]
+    fn a_d1_decision_model_is_refused_by_its_class_or_any_d1_key() {
+        for base in [real_config(), real_omni_config()] {
+            let mut by_arch = base.clone();
+            by_arch["architectures"] = serde_json::json!(["D1Model"]);
+            let mut by_auto_map = base.clone();
+            by_auto_map["auto_map"] =
+                serde_json::json!({"AutoModel": "modeling_d1_lfm3_omni.D1Model"});
+            // Spelled out, not read from the const, so dropping a key fails.
+            let by_key = [
+                "d1_attention",
+                "d1_box_edges",
+                "d1_codes",
+                "d1_numbers",
+                "d1_prompt",
+                "d1_set_size",
+                "d1_vision_max_pixels",
+            ]
+            .map(|key| {
+                let mut c = base.clone();
+                c[key] = 1.into();
+                c
+            });
+            for c in [by_arch, by_auto_map].into_iter().chain(by_key) {
+                let e = parse_lfm3_vl_vision_config(&c.to_string()).expect_err("d1");
+                assert!(e.to_string().contains("D1 decision model"), "{e}");
+            }
+        }
+    }
+
+    /// The audio half is refused at the door, by section name: a config
+    /// missing a section, or carrying one that names another audio model, is
+    /// not a checkpoint this port has seen, and an audio half this reader
+    /// cannot describe must never be ingested silently.
+    #[test]
+    fn an_omni_config_whose_audio_half_is_not_the_published_shape_is_refused() {
+        for (drop, needle) in [
+            ("audio_encoder_config", "audio_encoder_config"),
+            ("depth_config", "depth_config"),
+        ] {
+            let mut c = real_omni_config();
+            c.as_object_mut().unwrap().remove(drop);
+            let e = parse_lfm3_vl_vision_config(&c.to_string()).expect_err(drop);
+            assert!(e.to_string().contains(needle), "{e}");
+        }
+        let mut c = real_omni_config();
+        c["audio_encoder_config"]["model_type"] = "whisper".into();
+        let e = parse_lfm3_vl_vision_config(&c.to_string()).expect_err("wrong audio encoder");
+        assert!(e.to_string().contains("lfm3_omni_encoder"), "{e}");
+        let mut c = real_omni_config();
+        c["depth_config"]["model_type"] = "lfm2".into();
+        let e = parse_lfm3_vl_vision_config(&c.to_string()).expect_err("wrong depth decoder");
+        assert!(e.to_string().contains("depth_config"), "{e}");
+    }
+
+    /// Mutation check for the audio refusal's OTHER half: the values inside
+    /// the audio sections never reach the tower. Whatever the audio half
+    /// says, the image path this reader returns is the same.
+    #[test]
+    fn audio_section_values_never_reach_the_tower() {
+        let base = parse_lfm3_vl_vision_config(&real_omni_config().to_string()).unwrap();
+        let mut c = real_omni_config();
+        c["audio_encoder_config"]["hidden_size"] = 4_096.into();
+        c["audio_encoder_config"]["num_mel_bins"] = 80.into();
+        c["depth_config"]["num_hidden_layers"] = 9.into();
+        c["audio_token_id"] = 42.into();
+        c["audio_out_token_id"] = 43.into();
+        assert_eq!(parse_lfm3_vl_vision_config(&c.to_string()).unwrap(), base);
+    }
+
+    /// The D1 decision model wears the same model_type, trunk fields and
+    /// vision_config as the chat omni; its root `d1_*` keys are what refuses
+    /// it, in the vision reader AND in the trunk parser (the latter is pinned
+    /// in `tests/lfm3_config.rs`).
+    #[test]
+    fn a_d1_decision_model_is_refused_before_its_tower_is_read() {
+        for key in LFM3_OMNI_D1_KEYS {
+            let mut c = real_omni_config();
+            c[key] = serde_json::json!({"probe": true});
+            let e = parse_lfm3_vl_vision_config(&c.to_string()).expect_err(key);
+            assert!(e.to_string().contains("D1 decision model"), "{e}");
+        }
+    }
+
+    /// The reader accepts exactly the two wrappers the published LiquidAI
+    /// checkpoints use. A plain `lfm3` trunk config has no tower here (its
+    /// published configs carry either no `vision_config` or an empty one, and
+    /// no vision path can reach this reader for one), and any other wrapper
+    /// is a checkpoint this port has never seen.
+    #[test]
+    fn a_root_model_type_that_is_neither_wrapper_is_refused() {
+        let mut c = real_config();
+        c["model_type"] = "lfm3".into();
+        let e = parse_lfm3_vl_vision_config(&c.to_string()).expect_err("plain trunk");
+        assert!(e.to_string().contains("lfm3_vl"), "{e}");
+        let mut c = real_config();
+        c["model_type"] = "lfm2_vl".into();
+        let e = parse_lfm3_vl_vision_config(&c.to_string()).expect_err("unknown wrapper");
+        assert!(e.to_string().contains("lfm2_vl"), "{e}");
+    }
+
+    /// The audio tensors' classification: the four prefixes the published
+    /// omni index carries are dropped (never ingested as trunk, tower, or
+    /// unknown-name error), while the tower and projector prefixes beside
+    /// them stay the tower. Read off the real index's own prefixes.
+    #[test]
+    fn the_omni_audio_prefixes_are_dropped_and_the_tower_is_ingested() {
+        use crate::gemma4_checkpoint::{classify_for_family, Gemma4Bucket};
+        let audio = [
+            "audio_tower.lfm.layers.0.conv.conv.weight",
+            "audio_projector.linear_1.weight",
+            "depth_decoder.model.layers.0.self_attn.q_proj.weight",
+            "codebook_embedding.weight",
+        ];
+        for name in audio {
+            assert_eq!(
+                classify_for_family(name, 24, model_io::ModelFamily::Lfm3),
+                Gemma4Bucket::ExcludedMultimodal,
+                "{name}"
+            );
+        }
+        for (name, bucket) in [
+            (
+                "vision_tower.layers.0.operator_norm.weight",
+                Gemma4Bucket::VisionTower,
+            ),
+            (
+                "multi_modal_projector.linear_1.weight",
+                Gemma4Bucket::VisionTower,
+            ),
+            (
+                "language_model.model.layers.0.self_attn.q_proj.weight",
+                Gemma4Bucket::LmResident,
+            ),
+        ] {
+            assert_eq!(
+                classify_for_family(name, 24, model_io::ModelFamily::Lfm3),
+                bucket,
+                "{name}"
+            );
+        }
     }
 
     /// Each value the tower kind implies is refused when it moves.

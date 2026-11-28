@@ -1,4 +1,4 @@
-//! The MiniCPM-V 4.7 tower's ingest (`docs/MINICPMV_VISION_PHASE0.md`).
+//! The MiniCPM-V (4.6 and 4.7) tower's ingest (`docs/MINICPMV_VISION_PHASE0.md`).
 //!
 //! Three source prefixes make one tower: `vision_tower.` (the SigLIP encoder),
 //! `vit_merger.` (the 2x2 window attention-merger that runs after block 6) and
@@ -151,6 +151,28 @@ fn expected_elems(v: &VisionConfig, source_tail: &str, group: Group) -> Option<u
             _ => return None,
         },
     })
+}
+
+/// The patch kernel is copied without a permutation, so it must already be
+/// `(out, P, P, C)`. The element count cannot tell that from the HF-native
+/// `(out, C, P, P)` the upstream BF16 repo ships, which would be accepted and
+/// then read every patch in the wrong order.
+fn check_patch_kernel_layout(
+    name: &str,
+    v: &VisionConfig,
+    shape: &[u64],
+) -> Result<(), Gemma4Error> {
+    let p = v.patch_size as u64;
+    let want = [v.hidden_size as u64, p, p, v.in_channels as u64];
+    if shape != want {
+        return Err(Gemma4Error::ShapeMismatch {
+            tensor: name.to_string(),
+            detail: format!(
+                "shape {shape:?}, this reader takes the channels-last MLX layout {want:?}"
+            ),
+        });
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -328,6 +350,9 @@ pub fn read_minicpm_vision_entries(
             let name = name.expect("checked above");
             let (converted, shape) = read_tower_tensor(shards, name, None)?;
             check(name, table[slot], group, &shape)?;
+            if group == Group::Tower && table[slot] == "embeddings.patch_embedding.weight" {
+                check_patch_kernel_layout(name, vision, &shape)?;
+            }
             if converted.lossy > 0 {
                 lossy_conversion.push((name.to_string(), converted.lossy));
             }
@@ -379,6 +404,83 @@ pub fn read_minicpm_vision_entries(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct Zeros;
+
+    impl crate::RangeSource for Zeros {
+        fn read_range(&self, start: u64, end: u64) -> Result<Vec<u8>, crate::DownloadError> {
+            Ok(vec![0; (end - start) as usize])
+        }
+    }
+
+    /// Reads a whole miniature tower (hidden 2, intermediate 1) whose patch
+    /// kernel has shape `kernel`.
+    fn read_with_patch_kernel(kernel: [u64; 4]) -> Result<VisionRead, Gemma4Error> {
+        let vision = VisionConfig {
+            depth: 27,
+            hidden_size: 2,
+            intermediate_size: 1,
+            patch_size: 14,
+            in_channels: 3,
+            num_position_embeddings: 4,
+            out_hidden_size: 2,
+            ..VisionConfig::NONE
+        };
+        let mut tensors = std::collections::BTreeMap::new();
+        let mut add = |name: String, tail: &str, group: Group| {
+            let n = expected_elems(&vision, tail, group).expect("known tail") as u64;
+            let shape = if tail == "embeddings.patch_embedding.weight" {
+                kernel.to_vec()
+            } else {
+                vec![n]
+            };
+            tensors.insert(
+                name,
+                crate::TensorInfo {
+                    dtype: "BF16".into(),
+                    shape,
+                    data_offsets: (0, n * 2),
+                },
+            );
+        };
+        for layer in 0..27 {
+            for (_, t) in MINICPM_BLOCK_ROLES {
+                add(
+                    format!("{VISION_PREFIX}encoder.layers.{layer}.{t}"),
+                    t,
+                    Group::Block,
+                );
+            }
+        }
+        for t in MINICPM_TOWER_RESIDENT {
+            add(format!("{VISION_PREFIX}{t}"), t, Group::Tower);
+        }
+        for t in MINICPM_VIT_MERGER {
+            add(format!("{VIT_MERGER_PREFIX}{t}"), t, Group::VitMerger);
+        }
+        for t in MINICPM_MERGER {
+            add(format!("{MERGER_PREFIX}{t}"), t, Group::Merger);
+        }
+        let header = crate::SafetensorsHeader {
+            tensors,
+            metadata: None,
+            header_len: 8,
+        };
+        let names: Vec<&str> = header.tensors.keys().map(String::as_str).collect();
+        let shards = Gemma4Shards::new(vec![(&header, &Zeros as &dyn crate::RangeSource)])?;
+        read_minicpm_vision_entries(&shards, &names, &vision)
+    }
+
+    #[test]
+    fn a_channels_first_patch_kernel_is_refused() {
+        assert!(read_with_patch_kernel([2, 14, 14, 3]).is_ok());
+        // Same element count, the upstream HF-native order.
+        let err = match read_with_patch_kernel([2, 3, 14, 14]) {
+            Ok(_) => panic!("a channels-first kernel was accepted"),
+            Err(e) => e.to_string(),
+        };
+        assert!(err.contains("channels-last"), "{err}");
+    }
 
     #[test]
     fn the_role_tables_cover_the_published_tower() {

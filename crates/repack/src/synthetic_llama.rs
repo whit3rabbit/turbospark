@@ -28,6 +28,7 @@ use crate::safetensors_header::parse_header;
 use crate::synthetic_real::{
     assemble_safetensors, bf16_vector, expert_int4_triple, int4_triple, int8_triple, Tensor,
 };
+use crate::synthetic_tensors::deterministic_row;
 
 const HIDDEN: usize = 64;
 const NUM_HEADS: usize = 4;
@@ -286,6 +287,126 @@ pub fn build_synthetic_gqa_moe_install(
     )
 }
 
+/// One tower tensor of [`build_synthetic_idefics3_install`] under its
+/// checkpoint name, with the values the checkpoint holds (after BF16
+/// rounding), so a test can compute the forward pass independently.
+#[derive(Debug, Clone)]
+pub struct SyntheticTowerTensor {
+    /// The published tensor name.
+    pub name: String,
+    /// Logical shape.
+    pub shape: Vec<usize>,
+    /// Row-major values.
+    pub values: Vec<f32>,
+}
+
+/// Writes a tiny dense llama install carrying an Idefics3 / SmolVLM tower
+/// under the names the published conversions use, through the real repack
+/// walk (`docs/IDEFICS3_VISION_PHASE0.md`).
+///
+/// Tower: hidden 16, 2 heads, MLP 24, 2 blocks, patch 4 over an 18-pixel
+/// tile (so the patch grid is a floored 4x4), pixel shuffle 2, `<image>` id
+/// 200.
+pub fn build_synthetic_idefics3_install(
+    dir: &std::path::Path,
+    vocab_size: i64,
+    num_layers: i64,
+    model_id: &str,
+) -> Result<(ArchConfig, Vec<SyntheticTowerTensor>), Box<dyn std::error::Error>> {
+    const H: usize = 16;
+    const MLP: usize = 24;
+    const DEPTH: usize = 2;
+    const PATCH: usize = 4;
+    const SIDE: usize = 4;
+    const SCALE: usize = 2;
+    let mut arch = tiny_gqa_moe_arch(vocab_size, num_layers, 0, ModelFamily::Llama);
+    arch.vision = VisionConfig {
+        depth: DEPTH as i64,
+        hidden_size: H as i64,
+        intermediate_size: MLP as i64,
+        num_heads: 2,
+        patch_size: PATCH as i64,
+        temporal_patch_size: 1,
+        in_channels: 3,
+        spatial_merge_size: SCALE as i64,
+        num_position_embeddings: (SIDE * SIDE) as i64,
+        out_hidden_size: HIDDEN as i64,
+        mrope_section: [0, 0, 0],
+        deepstack_visual_indexes: Vec::new(),
+        vision_start_token_id: 0,
+        vision_end_token_id: 0,
+        image_token_id: 200,
+        video_token_id: 0,
+        tower: model_io::VisionTowerKind::SigLipNaViT,
+    };
+
+    let mut tower: Vec<SyntheticTowerTensor> = Vec::new();
+    let mut tensors: Vec<Tensor> = Vec::new();
+    let mut add = |name: String, shape: Vec<usize>, center: f32, amplitude: f32| {
+        let n: usize = shape.iter().product();
+        let bits: Vec<u16> = deterministic_row(5_000 + tensors.len() as u64, n)
+            .iter()
+            .map(|&j| compute::f32_to_bf16(center + j * amplitude))
+            .collect();
+        tower.push(SyntheticTowerTensor {
+            name: name.clone(),
+            shape: shape.clone(),
+            values: bits.iter().map(|&b| compute::bf16_to_f32(b)).collect(),
+        });
+        tensors.push(Tensor {
+            name,
+            dtype: "BF16",
+            shape: shape.iter().map(|&d| d as u64).collect(),
+            bytes: crate::synthetic_tensors::u16_le(&bits),
+        });
+    };
+    let base = "vision_model.";
+    add(
+        format!("{base}embeddings.patch_embedding.weight"),
+        vec![H, PATCH, PATCH, 3],
+        0.0,
+        0.2,
+    );
+    add(
+        format!("{base}embeddings.patch_embedding.bias"),
+        vec![H],
+        0.0,
+        0.2,
+    );
+    add(
+        format!("{base}embeddings.position_embedding.weight"),
+        vec![SIDE * SIDE, H],
+        0.0,
+        0.5,
+    );
+    for blk in 0..DEPTH {
+        let p = format!("{base}encoder.layers.{blk}.");
+        for norm in ["layer_norm1", "layer_norm2"] {
+            add(format!("{p}{norm}.weight"), vec![H], 1.0, 0.2);
+            add(format!("{p}{norm}.bias"), vec![H], 0.0, 0.2);
+        }
+        for proj in ["q_proj", "k_proj", "v_proj", "out_proj"] {
+            add(format!("{p}self_attn.{proj}.weight"), vec![H, H], 0.0, 0.4);
+            add(format!("{p}self_attn.{proj}.bias"), vec![H], 0.0, 0.2);
+        }
+        add(format!("{p}mlp.fc1.weight"), vec![MLP, H], 0.0, 0.3);
+        add(format!("{p}mlp.fc1.bias"), vec![MLP], 0.0, 0.2);
+        add(format!("{p}mlp.fc2.weight"), vec![H, MLP], 0.0, 0.3);
+        add(format!("{p}mlp.fc2.bias"), vec![H], 0.0, 0.2);
+    }
+    add(format!("{base}post_layernorm.weight"), vec![H], 1.0, 0.2);
+    add(format!("{base}post_layernorm.bias"), vec![H], 0.0, 0.2);
+    add(
+        "connector.modality_projection.proj.weight".to_string(),
+        vec![HIDDEN, H * SCALE * SCALE],
+        0.0,
+        0.3,
+    );
+
+    let arch = write_gqa_checkpoint(dir, arch, model_id, 0.0, tensors)?;
+    Ok((arch, tower))
+}
+
 /// The shared body. `num_experts == 0` writes the dense FFN and omits the
 /// router; anything above writes the router and the routed experts.
 fn build_gqa_install(
@@ -307,6 +428,22 @@ fn build_gqa_install(
     } else {
         tiny_gqa_moe_arch(vocab_size, num_layers, num_experts, family)
     };
+    write_gqa_checkpoint(dir, arch, model_id, qwen2_bias, Vec::new())
+}
+
+/// Builds the trunk checkpoint `arch` describes, appends `extra` tensors and
+/// runs the real repack walk.
+fn write_gqa_checkpoint(
+    dir: &std::path::Path,
+    arch: ArchConfig,
+    model_id: &str,
+    qwen2_bias: f32,
+    extra: Vec<Tensor>,
+) -> Result<ArchConfig, Box<dyn std::error::Error>> {
+    let family = arch.family;
+    let vocab_size = arch.vocab_size;
+    let num_layers = arch.num_layers;
+    let num_experts = arch.num_experts;
     let experts = num_experts as usize;
     let vocab = vocab_size as usize;
 
@@ -446,6 +583,7 @@ fn build_gqa_install(
         7,
     ));
 
+    ts.extend(extra);
     let blob = assemble_safetensors(&ts);
     let source = MemoryRangeSource::new(&blob);
     let header = parse_header(&blob, crate::safetensors_header::DEFAULT_MAX_HEADER_BYTES)?;

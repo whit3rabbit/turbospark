@@ -21,12 +21,26 @@ The other towers each have their own page, because each differs from the Qwen
 one in its blocks, preprocessing or position rule and the facts do not carry
 over: `Qwen2.5-VL` on the `qwen2` family
 ([`QWEN25_VL_VISION_PHASE0.md`](QWEN25_VL_VISION_PHASE0.md): RMSNorm blocks, a
-gated SiLU MLP, window attention, chunked mRoPE) and `LFM3-VL` on `lfm3`
+gated SiLU MLP, window attention, chunked mRoPE), its pre-2.5 sibling
+`Qwen2-VL` on the same family
+([`QWEN2VL_VISION_PHASE0.md`](QWEN2VL_VISION_PHASE0.md): LayerNorm blocks, a
+plain quick-GELU MLP, full attention on every block, the same chunked mRoPE)
+and `LFM3-VL` on `lfm3`
 ([`LFM3_VL_VISION_PHASE0.md`](LFM3_VL_VISION_PHASE0.md): gated depthwise
 convolution blocks beside grouped-query attention). They return the same
 `VisionEmbedding` as the Qwen tower, so `set_prompt_vision`, the prompt
 builders and every front end below are shared. DeepSeek-VL2-tiny runs on a plain-attention arm of the deepseek2 flow
-trunk ([`DEEPSEEK_VL2_VISION_PHASE0.md`](DEEPSEEK_VL2_VISION_PHASE0.md)).
+trunk ([`DEEPSEEK_VL2_VISION_PHASE0.md`](DEEPSEEK_VL2_VISION_PHASE0.md)). The
+InternVL wrappers (both `internvl_chat` over qwen2 and `internvl` over qwen3)
+share one InternViT tower
+([`INTERNVL_VISION_PHASE0.md`](INTERNVL_VISION_PHASE0.md): LayerNorm blocks
+with attention biases and a per-block layer scale, a 1025-row learned
+position table, dynamic 448 px tiling with a thumbnail, a host pixel shuffle,
+and flat injection through `set_prompt_vision_flat`). Idefics3 and SmolVLM
+over a llama trunk share a variable-size SigLIP tower with a pixel-shuffle
+connector and tile splitting
+([`IDEFICS3_VISION_PHASE0.md`](IDEFICS3_VISION_PHASE0.md): combined installs,
+CLI and `ts_generate` only, one SmolVLM-256M real-weights smoke).
 
 The standalone `<alias>.gturbo-vision/` sidecar format, `--vision-sidecar`,
 and `pull-vision` are verified on real hardware. The Qwen GDN MoE family shares

@@ -209,6 +209,98 @@ pub fn canonicalize_qwen2_header(
     Ok(())
 }
 
+/// Renames the `internvl` wrapper's doubled trunk namespace onto the
+/// canonical install namespace, exactly as mlx-vlm's `Model.sanitize` does
+/// (`internvl/internvl.py`): the mlx-vlm wrapper nests the trunk under
+/// `language_model.model.` while its Qwen3 module is itself `model`, so the
+/// published conversion spells every trunk tensor
+/// `language_model.model.model.*` and the head
+/// `language_model.model.lm_head.*`. The walk reads
+/// `language_model.model.*` and `language_model.lm_head.*`.
+///
+/// A no-op on a header that carries no doubled spelling, which is every
+/// `internvl_chat` conversion (its trunk is already canonical). Refuse a
+/// header that mixes the two spellings or whose rename would collide.
+pub fn canonicalize_internvl_header(
+    header: &mut SafetensorsHeader,
+) -> Result<(), super::config::Gemma4Error> {
+    const DOUBLED: &str = "language_model.model.model.";
+    const CANONICAL: &str = "language_model.model.";
+    const DOUBLED_HEAD: &str = "language_model.model.lm_head.";
+    const CANONICAL_HEAD: &str = "language_model.lm_head.";
+    let has_doubled = header
+        .tensors
+        .keys()
+        .any(|n| n.starts_with(DOUBLED) || n.starts_with(DOUBLED_HEAD));
+    if !has_doubled {
+        return Ok(());
+    }
+    let mut renamed = std::collections::BTreeMap::new();
+    for (name, info) in std::mem::take(&mut header.tensors) {
+        let canonical = if let Some(tail) = name.strip_prefix(DOUBLED) {
+            format!("{CANONICAL}{tail}")
+        } else if let Some(tail) = name.strip_prefix(DOUBLED_HEAD) {
+            format!("{CANONICAL_HEAD}{tail}")
+        } else {
+            name.clone()
+        };
+        if renamed.insert(canonical.clone(), info).is_some() {
+            return Err(super::config::Gemma4Error::Config(format!(
+                "InternVL trunk rename creates duplicate tensor {canonical}"
+            )));
+        }
+    }
+    header.tensors = renamed;
+    Ok(())
+}
+
+/// Renames the Idefics3 / SmolVLM wrappers' trunk namespace onto the one the
+/// llama flow reads, exactly as mlx-vlm's `Model.sanitize` does
+/// (`idefics3/idefics3.py`): the conversion nests the Llama module under
+/// `language_model.`, so every trunk tensor is spelled
+/// `language_model.layers.*`, `language_model.embed_tokens.*` and
+/// `language_model.norm.*`, where the walk reads them under
+/// `language_model.model.*`. The head is already canonical: the sanitize
+/// maps a bare `lm_head.` onto `language_model.lm_head.`, the spelling
+/// `families/llama` reads, so it is deliberately NOT renamed here.
+///
+/// A no-op on a header that carries no single-prefixed spelling, which is
+/// every plain Llama conversion (its trunk is already canonical) and every
+/// InternVL one. Refuse a header whose rename would collide.
+pub fn canonicalize_idefics3_header(
+    header: &mut SafetensorsHeader,
+) -> Result<(), super::config::Gemma4Error> {
+    const SOURCE_PREFIXES: [&str; 3] = [
+        "language_model.layers.",
+        "language_model.embed_tokens.",
+        "language_model.norm.",
+    ];
+    let has_source = header
+        .tensors
+        .keys()
+        .any(|name| SOURCE_PREFIXES.iter().any(|p| name.starts_with(p)));
+    if !has_source {
+        return Ok(());
+    }
+    let mut renamed = std::collections::BTreeMap::new();
+    for (name, info) in std::mem::take(&mut header.tensors) {
+        // The tail keeps `layers.` / `norm.` / `embed_tokens.`: only the
+        // `language_model.` namespace gains `model.`.
+        let canonical = if SOURCE_PREFIXES.iter().any(|p| name.starts_with(p)) {
+            name.replacen("language_model.", "language_model.model.", 1)
+        } else {
+            name
+        };
+        if renamed.insert(canonical.clone(), info).is_some() {
+            return Err(super::config::Gemma4Error::Config(format!(
+                "Idefics3 trunk rename creates duplicate tensor {canonical}"
+            )));
+        }
+    }
+    header.tensors = renamed;
+    Ok(())
+}
+
 /// Renames the DeepSeek-VL2 MLX checkpoint's fused shared-expert container
 /// onto the spelling the `deepseek2` flow reads.
 ///
@@ -592,6 +684,11 @@ pub fn classify_for_family(name: &str, num_layers: usize, family: ModelFamily) -
                 | ModelFamily::Gemma4
                 | ModelFamily::Lfm3
                 | ModelFamily::MuseGlimmer
+                // The `internvl` wrapper (InternVL3.5) over a plain dense
+                // `qwen3` trunk carries its InternViT under `vision_tower.`;
+                // whether it is INGESTED is `vision_should_ingest`'s call,
+                // so a text-only install still drops these.
+                | ModelFamily::Qwen3Dense
         )
     {
         return Gemma4Bucket::VisionTower;
@@ -599,6 +696,52 @@ pub fn classify_for_family(name: &str, num_layers: usize, family: ModelFamily) -
     // LFM3-VL's projector sits beside its tower under `multi_modal_projector.`.
     if name.starts_with(super::vision_lfm3::LFM3_PROJECTOR_PREFIX) && family == ModelFamily::Lfm3 {
         return Gemma4Bucket::VisionTower;
+    }
+    // The `internvl` wrapper's projector shares the LFM3 prefix spelling
+    // (`multi_modal_projector.`), so it is claimed for the dense `qwen3`
+    // trunk it wraps, beside the tower arm above.
+    if name.starts_with(super::vision_internvl::INTERNVL_PROJECTOR_PREFIX)
+        && family == ModelFamily::Qwen3Dense
+    {
+        return Gemma4Bucket::VisionTower;
+    }
+    // The `internvl_chat` wrapper (InternVL2.5/3) over a dense Qwen2 trunk
+    // spells its tower `vision_model.` and its projector `mlp1.` (the mlx-vlm
+    // module list). Whether they are INGESTED is `vision_should_ingest`'s
+    // call, so a text-only install still drops them.
+    if family == ModelFamily::Qwen2Dense
+        && (name.starts_with(super::vision_internvl::INTERNVL_CHAT_TOWER_PREFIX)
+            || name.starts_with(super::vision_internvl::INTERNVL_CHAT_PROJECTOR_PREFIX))
+    {
+        return Gemma4Bucket::VisionTower;
+    }
+    // The Idefics3 / SmolVLM wrappers over a llama trunk spell their tower
+    // `vision_model.` (the same string DeepSeek-OCR's drop arm excludes, for
+    // a different family) and their connector `connector.` -- the tower arm
+    // sits BEFORE the generic drop list below, which would otherwise refuse
+    // both as unknown names. Whether they are INGESTED is
+    // `vision_should_ingest`'s call, so a text-only install still drops
+    // them.
+    if family == ModelFamily::Llama
+        && (name.starts_with(super::vision_idefics3::IDEFICS3_TOWER_PREFIX)
+            || name.starts_with(super::vision_idefics3::IDEFICS3_CONNECTOR_PREFIX))
+    {
+        return Gemma4Bucket::VisionTower;
+    }
+    // LFM3-Omni's audio half (`vision_lfm3::LFM3_OMNI_AUDIO_TENSOR_PREFIXES`'s
+    // doc): the LFM3-Audio encoder, the audio projector, the MaskGIT depth
+    // decoder and the codec's codebook embedding, shipped in every published
+    // omni checkpoint beside the tower this family DOES ingest. The arm sits
+    // BEFORE the generic drop list below, which would also catch
+    // `audio_tower.`, so the exclusion is this family's own decision, stated
+    // beside the arm that ingests its tower, and the streamed writer reports
+    // the drop by name. Audio intake is refused; nothing here ingests it.
+    if family == ModelFamily::Lfm3
+        && super::vision_lfm3::LFM3_OMNI_AUDIO_TENSOR_PREFIXES
+            .iter()
+            .any(|prefix| name.starts_with(prefix))
+    {
+        return Gemma4Bucket::ExcludedMultimodal;
     }
     // Muse-Glimmer splits its vision side three ways (`vision_tower.` above,
     // then the adapter and the projection into the trunk). All three are one
@@ -620,12 +763,13 @@ pub fn classify_for_family(name: &str, num_layers: usize, family: ModelFamily) -
     {
         return Gemma4Bucket::ExcludedMultimodal;
     }
-    // MiniCPM-V 4.7's two adapters ride beside its `vision_tower.`: the 2x2
+    // MiniCPM-V's two adapters ride beside its `vision_tower.`: the 2x2
     // window attention-merger and the final merger. Bucketed as the tower for
-    // the Qwen MoE trunk it wraps; the walk drops the bucket when no tower is
-    // requested, so a text-only install is unchanged, and no other Qwen MoE
-    // checkpoint carries a top-level `merger.` or `vit_merger.`.
-    if family == ModelFamily::QwenGdnMoe
+    // the Qwen trunk it wraps (MoE for 4.7, dense for 4.6); the walk drops
+    // the bucket when no tower is requested, so a text-only install is
+    // unchanged, and no other qwen3.5 checkpoint carries a top-level
+    // `merger.` or `vit_merger.` (Qwen's own merger is `vision_tower.merger.`).
+    if matches!(family, ModelFamily::QwenGdnMoe | ModelFamily::QwenGdnDense)
         && (name.starts_with(super::vision_minicpm::VIT_MERGER_PREFIX)
             || name.starts_with(super::vision_minicpm::MERGER_PREFIX))
     {
@@ -649,7 +793,8 @@ pub fn classify_for_family(name: &str, num_layers: usize, family: ModelFamily) -
     // `vit_merger.` and `merger.` are `mlx-community/MiniCPM-V-4.7-35B-A3B-mxfp4`'s
     // (16 and 6 tensors), whose own `vision_tower.` is claimed by the arm
     // above for its Qwen trunk; `vit_merger.` and `merger.` are claimed as
-    // the tower for that trunk just before this list.
+    // the tower for both qwen3.5 trunks just before this list, so these two
+    // arms only ever drop them under another family.
     if name.starts_with("vision_tower.")
         || name.starts_with("embed_vision.")
         || name.starts_with("audio_tower.")
