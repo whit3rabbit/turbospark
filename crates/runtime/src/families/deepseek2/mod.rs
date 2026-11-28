@@ -290,7 +290,7 @@ impl RealForwardRunner {
             }
 
             let t_wait = Instant::now();
-            let committed = pass.commit();
+            let committed = pass.commit_checked().map_err(RealForwardError::Gpu)?;
             let gpu_t = committed.wait_with_gpu_time();
             self.phases.cb1_gpu_nanos += (gpu_t * 1e9) as u64;
             self.phases.gpu_wait_nanos += t_wait.elapsed().as_nanos() as u64;
@@ -373,7 +373,11 @@ impl RealForwardRunner {
             pass.relabel("final cb (prefill, no head)");
         }
         let t_wait = Instant::now();
-        self.phases.final_cb_gpu_nanos += (pass.commit_and_wait_with_gpu_time() * 1e9) as u64;
+        self.phases.final_cb_gpu_nanos += (pass
+            .commit_checked()
+            .map_err(RealForwardError::Gpu)?
+            .wait_with_gpu_time()
+            * 1e9) as u64;
         self.phases.final_wait_nanos += t_wait.elapsed().as_nanos() as u64;
         self.kv.advance();
         if let Some(capture) = self.resid_capture.as_mut() {

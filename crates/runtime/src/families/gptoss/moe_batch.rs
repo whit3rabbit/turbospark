@@ -298,7 +298,7 @@ impl RealForwardRunner {
             }
 
             sub_start += sub_len;
-            committed = Some(pass.commit());
+            committed = Some(pass.commit_checked().map_err(RealForwardError::Gpu)?);
         }
 
         Ok(committed.expect("m >= 1 guarantees at least one sub-batch"))

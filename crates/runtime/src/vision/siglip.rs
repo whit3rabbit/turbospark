@@ -458,7 +458,7 @@ impl SiglipVisionTower {
                 )
                 .map_err(gpu_err)?;
             }
-            pass.commit_and_wait();
+            pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
             if let Some(st) = stages.as_mut() {
                 st.embed = read(&x, wide);
             }
@@ -494,7 +494,7 @@ impl SiglipVisionTower {
                     &scratch,
                     s,
                 )?;
-                pass.commit_and_wait();
+                pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
                 if let Some(st) = stages.as_mut() {
                     if blk == 0 {
                         st.block_first = read(&x, wide);
@@ -519,7 +519,7 @@ impl SiglipVisionTower {
                 FINAL_LAYER_NORM_EPS,
             )
             .map_err(gpu_err)?;
-            pass.commit_and_wait();
+            pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
             let tower_out = read(&x, wide);
 
             // The unfold is data movement only: pad each tile's grid to an even
@@ -564,7 +564,7 @@ impl SiglipVisionTower {
                 o as u32,
             )
             .map_err(gpu_err)?;
-            pass.commit_and_wait();
+            pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
 
             let projected = read(&out, merged_rows * o);
             if let Some(st) = stages.as_mut() {

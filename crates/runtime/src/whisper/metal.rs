@@ -413,7 +413,9 @@ impl WhisperMetalEngine {
             // When bounded, stop at the layer output (no final norm): the
             // bisection compares per-layer hidden states.
             if stop_after.is_some() {
-                pass.commit_and_wait();
+                pass.commit_checked()
+                    .map_err(|error| error.to_string())?
+                    .wait();
                 return Ok(());
             }
 
@@ -430,7 +432,9 @@ impl WhisperMetalEngine {
                 eps,
             )
             .map_err(|e| e.to_string())?;
-            pass.commit_and_wait();
+            pass.commit_checked()
+                .map_err(|error| error.to_string())?
+                .wait();
             Ok(())
         })
     }
@@ -725,7 +729,9 @@ impl WhisperMetalEngine {
                 )
                 .map_err(|e| e.to_string())?;
             }
-            pass.commit_and_wait();
+            pass.commit_checked()
+                .map_err(|error| error.to_string())?
+                .wait();
             Ok(())
         })
     }
@@ -1017,9 +1023,13 @@ impl WhisperMetalEngine {
             }
             let wall = std::time::Instant::now();
             let gpu_seconds = if super::whisper_profile() {
-                pass.commit_and_wait_with_gpu_time()
+                pass.commit_checked()
+                    .map_err(|error| error.to_string())?
+                    .wait_with_gpu_time()
             } else {
-                pass.commit_and_wait();
+                pass.commit_checked()
+                    .map_err(|error| error.to_string())?
+                    .wait();
                 0.0
             };
             if super::whisper_profile() {

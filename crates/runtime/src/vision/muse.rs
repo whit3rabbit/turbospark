@@ -703,7 +703,7 @@ impl MuseVisionTower {
                 LN_EPS,
             )
             .map_err(e)?;
-            pass.commit_and_wait();
+            pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
             if let Some(c) = capture.as_mut() {
                 c.patch_embed = read_bits(&s.x, n_wide);
             }
@@ -715,7 +715,7 @@ impl MuseVisionTower {
                 })?;
                 let pass = context.begin_pass();
                 encode_block(context, &pass, &slots[slot], block_roles, &s, &shape, n)?;
-                pass.commit_and_wait();
+                pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
                 if let Some(c) = capture.as_mut() {
                     if n == 0 {
                         c.block_first = read_bits(&s.x, n_wide);
@@ -741,7 +741,7 @@ impl MuseVisionTower {
                 LN_EPS,
             )
             .map_err(e)?;
-            pass.commit_and_wait();
+            pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
             let in_window_order = read_bits(&s.normed, n_wide);
             let mut raster = vec![0u16; in_window_order.len()];
             for (j, &patch) in order.iter().enumerate() {
@@ -819,7 +819,7 @@ impl MuseVisionTower {
                 OUT_RMS_EPS,
             )
             .map_err(e)?;
-            pass.commit_and_wait();
+            pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
 
             let rows = read_bits(&out, merged * shape.out_hidden);
             if let Some(i) = rows

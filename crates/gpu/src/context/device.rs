@@ -37,6 +37,10 @@ pub struct MetalContext {
     /// because one context is one queue: passes on it run in order, so
     /// successive calls can share the scratch.
     pub(crate) int4_mma8_scratch: Option<(metal::Buffer, metal::Buffer, usize)>,
+    /// When a pass was last begun on this context, in
+    /// `keep_warm::now_ms` time. Shared with a [`crate::KeepWarm`], which
+    /// reads it as the owner's last use of its buffers.
+    activity: std::sync::Arc<AtomicU64>,
 }
 
 /// Every specialization of one cached function, keyed by its caller-supplied
@@ -119,7 +123,19 @@ impl MetalContext {
             buffer_allocations: AtomicU64::new(0),
             buffer_allocation_ns: AtomicU64::new(0),
             int4_mma8_scratch: None,
+            activity: std::sync::Arc::new(AtomicU64::new(crate::keep_warm::now_ms())),
         }
+    }
+
+    /// Records a pass beginning now (see the `activity` field).
+    pub(crate) fn note_activity(&self) {
+        self.activity
+            .store(crate::keep_warm::now_ms(), Ordering::Relaxed);
+    }
+
+    /// The clock [`Self::note_activity`] writes, for a keep-warm thread.
+    pub(crate) fn activity_clock(&self) -> std::sync::Arc<AtomicU64> {
+        std::sync::Arc::clone(&self.activity)
     }
 
     fn function(
@@ -391,6 +407,7 @@ impl MetalContext {
     /// `TURBOSPARK_DISPATCH_PROFILE=1`'s per-dispatch report.
     pub fn begin_pass_labeled(&self, label: &'static str) -> PassEncoder {
         launch_count::command_buffer();
+        self.note_activity();
         let command_buffer = self.queue.new_command_buffer().to_owned();
         command_buffer.set_label(label);
         let encoder = command_buffer.new_compute_command_encoder().to_owned();
@@ -422,6 +439,7 @@ impl MetalContext {
     /// which concurrent dispatches would race on.
     pub fn begin_pass_concurrent_labeled(&self, label: &'static str) -> PassEncoder {
         launch_count::command_buffer();
+        self.note_activity();
         let command_buffer = self.queue.new_command_buffer().to_owned();
         command_buffer.set_label(label);
         let encoder = command_buffer

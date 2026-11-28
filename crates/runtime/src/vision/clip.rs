@@ -439,7 +439,7 @@ impl ClipVisionTower {
                 CLIP_LAYER_NORM_EPS,
             )
             .map_err(gpu_err)?;
-            pass.commit_and_wait();
+            pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
             if let Some(st) = stages.as_mut() {
                 st.embed = read(&x);
             }
@@ -471,7 +471,7 @@ impl ClipVisionTower {
                     &scratch,
                     s,
                 )?;
-                pass.commit_and_wait();
+                pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
                 if let Some(st) = stages.as_mut() {
                     if blk == 0 {
                         st.block_first = read(&x);
@@ -518,7 +518,7 @@ impl ClipVisionTower {
                 o as u32,
             )
             .map_err(gpu_err)?;
-            pass.commit_and_wait();
+            pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
 
             let rows: Vec<u16> = gpu::read_buffer_f16(&out, 0, n * o)
                 .into_iter()

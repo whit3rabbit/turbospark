@@ -109,7 +109,11 @@ pub(crate) fn encode_qwen_moe_layer_batched_step(
         )?;
     }
     let t_wait = std::time::Instant::now();
-    phases.cb1_gpu_nanos += (pass.commit().wait_with_gpu_time() * 1e9) as u64;
+    phases.cb1_gpu_nanos += (pass
+        .commit_checked()
+        .map_err(RealForwardError::Gpu)?
+        .wait_with_gpu_time()
+        * 1e9) as u64;
     phases.gpu_wait_nanos += t_wait.elapsed().as_nanos() as u64;
 
     if let Some(prev) = routed_in_flight.take() {

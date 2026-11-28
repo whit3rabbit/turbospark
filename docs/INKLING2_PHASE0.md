@@ -829,6 +829,10 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
     `tests/real_forward_inkling2_prewarm.rs` reads the first token after a
     5 s gap at 262 ms with it and 1,518 ms without. A one-shot CLI run gains
     nothing (its first pass queues straight behind the touch).
+    The same mapping is dropped again after 1 to 2 s idle (KERN-05,
+    `docs/designs/speedup-kern.md`); the opt-in
+    `TURBOSPARK_INKLING2_KEEPWARM_MS` keep-warm re-names the buffers while
+    idle, for a bounded window.
 - DONE (2026-11-23): chunked prefill, step 5: tiled attention.
   - `inkling2_attention_prefill` (`encode_inkling2_attention_prefill`), the
     prefill passes' attention under the same matrix-unit switch: a

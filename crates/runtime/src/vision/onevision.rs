@@ -401,7 +401,7 @@ impl OneVisionTower {
                 )
                 .map_err(gpu_err)?;
             }
-            pass.commit_and_wait();
+            pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
             if let Some(st) = stages.as_mut() {
                 st.embed = read(&x, wide);
             }
@@ -437,7 +437,7 @@ impl OneVisionTower {
                     &scratch,
                     s,
                 )?;
-                pass.commit_and_wait();
+                pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
                 if let Some(st) = stages.as_mut() {
                     if blk == 0 {
                         st.block_first = read(&x, wide);
@@ -484,7 +484,7 @@ impl OneVisionTower {
                 o as u32,
             )
             .map_err(gpu_err)?;
-            pass.commit_and_wait();
+            pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
             Ok::<_, RealForwardError>((read(&out, seq * o), stages))
         })?;
 

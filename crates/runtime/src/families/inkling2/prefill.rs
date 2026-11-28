@@ -58,16 +58,87 @@ impl RealForwardRunner {
     /// installs only (a streamed open has no expert buffers to map). Writes
     /// one half into a scratch buffer; the model's buffers are only read.
     pub(crate) fn inkling2_prewarm(&mut self) -> Result<(), RealForwardError> {
-        if !prewarm_enabled() {
+        if !prewarm_enabled() || !self.inkling2_has_resident_experts() {
             return Ok(());
         }
-        let Some(st) = self.real_inkling2.as_ref() else {
+        foundation::engaged!("inkling2_prewarm");
+        // Not waited on: the command buffer retains what it references.
+        let _ = self.inkling2_prewarm_commit()?;
+        Ok(())
+    }
+
+    /// Starts the bounded keep-warm (KERN-05 Step 3) when
+    /// `TURBOSPARK_INKLING2_KEEPWARM_MS=<50..=5000>` is set, optionally with
+    /// `TURBOSPARK_INKLING2_KEEPWARM_WINDOW_S=<1..=3600>` (default 120). Off
+    /// by default. A thread names the buffers the prewarm names (every
+    /// resident expert buffer and the trunk) once per interval while the
+    /// runner is idle, until the window after its last pass, and not under
+    /// memory pressure. Without it the first pass after 1 to 2 s idle waits
+    /// 150 to 260 ms on mlx4 while macOS remaps them; with it, 2 to 6 ms
+    /// (`docs/designs/speedup-kern.md`). A streamed install names nothing
+    /// (its experts are mapped and the system must stay free to drop them),
+    /// so the knob is refused there rather than ignored, and so is a bad
+    /// value.
+    pub(crate) fn inkling2_start_keep_warm(&mut self) -> Result<(), RealForwardError> {
+        let env = |k: &str| std::env::var(k).ok();
+        let cfg = gpu::KeepWarmConfig::parse(
+            env("TURBOSPARK_INKLING2_KEEPWARM_MS").as_deref(),
+            env("TURBOSPARK_INKLING2_KEEPWARM_WINDOW_S").as_deref(),
+        )
+        .map_err(|e| RealForwardError::Unsupported(format!("TURBOSPARK_INKLING2_KEEPWARM: {e}")))?;
+        let Some(cfg) = cfg else {
+            return Ok(());
+        };
+        let Some(st) = self.real_inkling2.as_mut() else {
             return Ok(());
         };
         let Some(res) = st.resident.as_ref() else {
-            return Ok(());
+            return Err(RealForwardError::Unsupported(
+                "TURBOSPARK_INKLING2_KEEPWARM: only an install with resident experts keeps \
+                 warm; a streamed install's experts are mapped and never named"
+                    .to_string(),
+            ));
         };
-        foundation::engaged!("inkling2_prewarm");
+        let mut buffers: Vec<gpu::MetalBuffer> = res.layers.to_vec();
+        buffers.push(self.weights.buffer().to_owned());
+        st.keep_warm =
+            Some(gpu::KeepWarm::start(&self.context, buffers, cfg).map_err(RealForwardError::Gpu)?);
+        foundation::engaged!("inkling2_keep_warm");
+        Ok(())
+    }
+
+    /// The keep-warm's counters, or `None` when none is running.
+    pub(crate) fn inkling2_keep_warm_stats(&self) -> Option<gpu::KeepWarmStats> {
+        self.real_inkling2
+            .as_ref()
+            .and_then(|st| st.keep_warm.as_ref())
+            .map(gpu::KeepWarm::stats)
+    }
+
+    /// Whether this is an Inkling 2 runner with resident experts, the only
+    /// case [`Self::inkling2_prewarm_commit`] has buffers to name.
+    pub(crate) fn inkling2_has_resident_experts(&self) -> bool {
+        self.real_inkling2
+            .as_ref()
+            .is_some_and(|st| st.resident.is_some())
+    }
+
+    /// The prewarm's command buffer: one tiny dispatch per resident expert
+    /// buffer and one on the trunk, committed and NOT waited on. Shared by
+    /// the open-time prewarm and tslab's idle-gap `prewarm` arm (KERN-05),
+    /// which waits on it. `None` without resident experts. Ignores
+    /// `TURBOSPARK_INKLING2_PREWARM` and marks nothing engaged: the caller
+    /// decides both.
+    pub(crate) fn inkling2_prewarm_commit(
+        &mut self,
+    ) -> Result<Option<gpu::CommittedPass>, RealForwardError> {
+        let Some(res) = self
+            .real_inkling2
+            .as_ref()
+            .and_then(|st| st.resident.as_ref())
+        else {
+            return Ok(None);
+        };
         let scratch = self.context.new_output_buffer(16);
         let pass = self.context.begin_pass_labeled("inkling2 prewarm");
         let mut touch = |b: &gpu::MetalBuffer| {
@@ -78,9 +149,7 @@ impl RealForwardRunner {
             touch(b)?;
         }
         touch(self.weights.buffer())?;
-        // Not waited on: the command buffer retains what it references.
-        let _ = pass.commit();
-        Ok(())
+        Ok(Some(pass.commit_checked().map_err(RealForwardError::Gpu)?))
     }
 
     /// Why this install cannot take the chunked driver, or `None` when it

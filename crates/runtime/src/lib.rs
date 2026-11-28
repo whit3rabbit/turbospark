@@ -172,6 +172,8 @@ pub use real_forward::{
     dispatch_profile_report, PhaseCounters, RealForwardError, RealForwardRunner, RollbackPoint,
 };
 #[cfg(target_os = "macos")]
+pub use real_forward_api::IdleProbeAction;
+#[cfg(target_os = "macos")]
 pub use real_forward_init::{
     effective_expert_slot_wiring, install_resident_experts_supported, mapped_residency_refusal,
     mapped_residency_supported, resident_experts_decision, resident_residency_supported,

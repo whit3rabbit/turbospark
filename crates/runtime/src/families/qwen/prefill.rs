@@ -359,7 +359,7 @@ impl RealForwardRunner {
                     width,
                 )
                 .map_err(RealForwardError::Gpu)?;
-                pass.commit_and_wait();
+                pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
             }
             let d = self.real_dflash.as_mut().expect("caller checked");
             d.note_capture(start + m - 1, 1);
@@ -428,7 +428,7 @@ impl RealForwardRunner {
                         hidden,
                     )
                     .map_err(RealForwardError::Gpu)?;
-                    pass.commit_and_wait();
+                    pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
                 }
                 None => {}
             }
@@ -819,7 +819,11 @@ impl RealForwardRunner {
             pass.relabel("qwen dense chunk cb (no head)");
         }
         let t_wait = Instant::now();
-        self.phases.final_cb_gpu_nanos += (pass.commit_and_wait_with_gpu_time() * 1e9) as u64;
+        self.phases.final_cb_gpu_nanos += (pass
+            .commit_checked()
+            .map_err(RealForwardError::Gpu)?
+            .wait_with_gpu_time()
+            * 1e9) as u64;
         self.phases.final_wait_nanos += t_wait.elapsed().as_nanos() as u64;
         self.finish_qwen_dense_micro_batch(start_position, m, want_head, logits)
     }

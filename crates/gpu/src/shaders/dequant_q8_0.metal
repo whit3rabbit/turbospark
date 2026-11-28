@@ -71,6 +71,97 @@ kernel void dequant_q8_0_gemv_simd(
 // row is one contiguous byte run and the scale comes from inside the block.
 // One thread per element; `out_scale` is sqrt(hidden) for Gemma's scaled
 // embeddings, 1.0 otherwise.
+// KERN-04 Stage A bench arms for Q8_0, NOT used by the engine. A 34-byte block
+// keeps block starts only 2-byte aligned, so the loads are `ushort`, not
+// `uint`: each lane owns 4 consecutive quants of one block (two ushort loads,
+// one ushort for the f16 scale, one half4 of x), 8 lanes per block, 4 blocks
+// per simdgroup step. The scale is factored out of the block's 4-term sum
+// (`d * sum(q * x)`). `_r2` runs two rows per simdgroup that share the x load
+// (llama.cpp's NR0 = 2), 16 rows per threadgroup. Both read `W` 2-byte aligned
+// and `x` 8-byte aligned; the host checks. A block count that is not a
+// multiple of 4 is handled by the stride loop. The bits differ from the simd
+// kernel (different reduction).
+static inline float q8_0_wide_dot(device const uint8_t* blk, half4 xv, uint l) {
+    const char2 a = as_type<char2>(*(device const ushort*)(blk + 2 + l));
+    const char2 c = as_type<char2>(*(device const ushort*)(blk + 4 + l));
+    float s = float(a.x) * float(xv[0]);
+    s = fma(float(a.y), float(xv[1]), s);
+    s = fma(float(c.x), float(xv[2]), s);
+    s = fma(float(c.y), float(xv[3]), s);
+    return s;
+}
+
+static inline float q8_0_scale(device const uint8_t* blk) {
+    return float(as_type<half>(*(device const ushort*)blk));
+}
+
+[[kernel, max_total_threads_per_threadgroup(256)]]
+kernel void dequant_q8_0_gemv_wide(
+    device const uint8_t* W      [[buffer(0)]],
+    device const half*    x      [[buffer(1)]],
+    device half*          y      [[buffer(2)]],
+    constant uint&        M      [[buffer(3)]],
+    constant uint&        N      [[buffer(4)]],
+    uint                  tg_idx [[threadgroup_position_in_grid]],
+    uint                  sg_idx [[simdgroup_index_in_threadgroup]],
+    uint                  lane   [[thread_index_in_simdgroup]]
+) {
+    const uint row = tg_idx * kRowsPerTGQ8_0 + sg_idx;
+    if (row >= M) return;
+    const uint n_blocks = N / kQ8_0BlockElems;
+    device const uint8_t* W_row = W + uint(row) * n_blocks * kQ8_0BlockBytes;
+    const uint k = lane / 8u;
+    const uint l = (lane % 8u) * 4u;
+    float acc = 0.0f;
+    for (uint b = k; b < n_blocks; b += 4u) {
+        device const uint8_t* blk = W_row + b * kQ8_0BlockBytes;
+        const half4 xv = *(device const half4*)(x + b * kQ8_0BlockElems + l);
+        acc = fma(q8_0_scale(blk), q8_0_wide_dot(blk, xv, l), acc);
+    }
+    acc = simd_sum(acc);
+    if (lane == 0) {
+        y[row] = half(acc);
+    }
+}
+
+[[kernel, max_total_threads_per_threadgroup(256)]]
+kernel void dequant_q8_0_gemv_wide_r2(
+    device const uint8_t* W      [[buffer(0)]],
+    device const half*    x      [[buffer(1)]],
+    device half*          y      [[buffer(2)]],
+    constant uint&        M      [[buffer(3)]],
+    constant uint&        N      [[buffer(4)]],
+    uint                  tg_idx [[threadgroup_position_in_grid]],
+    uint                  sg_idx [[simdgroup_index_in_threadgroup]],
+    uint                  lane   [[thread_index_in_simdgroup]]
+) {
+    const uint row0 = (tg_idx * kRowsPerTGQ8_0 + sg_idx) * 2u;
+    if (row0 >= M) return;
+    const bool has1 = row0 + 1u < M;
+    const uint n_blocks = N / kQ8_0BlockElems;
+    const uint row_bytes = n_blocks * kQ8_0BlockBytes;
+    device const uint8_t* W0 = W + uint(row0) * row_bytes;
+    device const uint8_t* W1 = has1 ? W0 + row_bytes : W0;
+    const uint k = lane / 8u;
+    const uint l = (lane % 8u) * 4u;
+    float acc0 = 0.0f, acc1 = 0.0f;
+    for (uint b = k; b < n_blocks; b += 4u) {
+        const half4 xv = *(device const half4*)(x + b * kQ8_0BlockElems + l);
+        device const uint8_t* b0 = W0 + b * kQ8_0BlockBytes;
+        device const uint8_t* b1 = W1 + b * kQ8_0BlockBytes;
+        acc0 = fma(q8_0_scale(b0), q8_0_wide_dot(b0, xv, l), acc0);
+        acc1 = fma(q8_0_scale(b1), q8_0_wide_dot(b1, xv, l), acc1);
+    }
+    acc0 = simd_sum(acc0);
+    acc1 = simd_sum(acc1);
+    if (lane == 0) {
+        y[row0] = half(acc0);
+        if (has1) {
+            y[row0 + 1u] = half(acc1);
+        }
+    }
+}
+
 kernel void embed_lookup_q8_0(
     device const uint8_t* table     [[buffer(0)]],   // [V, D/32 * 34] blocks
     device half*          out       [[buffer(1)]],   // [D] FP16

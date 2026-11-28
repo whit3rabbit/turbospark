@@ -255,6 +255,7 @@ pub fn registry() -> Vec<&'static dyn KernelBench> {
         &int4_matmul::Int4Matmul,
         &int8_matmul::Int8Matmul,
         &attn_decode::AttnDecode,
+        &attn_decode::AttnDecodeGemma4,
         &gdn_delta::GdnDelta,
         &gdn_trajectory::GdnTrajectory,
         &rows_attn::RowsAttn,
@@ -277,7 +278,9 @@ pub fn arm_labels(bench: &str) -> Option<Vec<String>> {
     match bench {
         "int4_matmul" => Some(int4_matmul::ARMS.iter().map(|a| a.label()).collect()),
         "int8_matmul" => Some(int8_matmul::ARMS.iter().map(|a| a.to_string()).collect()),
-        "attn_decode" => Some(attn_decode::ARMS.iter().map(|a| a.to_string()).collect()),
+        "attn_decode" | "attn_decode_gemma4" => {
+            Some(attn_decode::ARMS.iter().map(|a| a.to_string()).collect())
+        }
         "gdn_delta" => Some(gdn_delta::ARMS.iter().map(|a| a.to_string()).collect()),
         "moe_routed" => Some(moe_routed::ARMS.iter().map(|a| a.to_string()).collect()),
         "qkv_concurrent" => Some(qkv_concurrent::ARMS.iter().map(|a| a.to_string()).collect()),

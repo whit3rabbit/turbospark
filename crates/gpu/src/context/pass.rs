@@ -7,24 +7,36 @@ use metal::{ComputePipelineState, MTLSize};
 use crate::dispatch_profile::PassProfile;
 use crate::launch_count;
 
-/// Panics when a dispatch asks for a larger threadgroup than the compiled
-/// pipeline allows on this device. Metal reports nothing for that: it skips
-/// the dispatch, the destination keeps its old contents and decode turns into
-/// fluent garbage (a 448-thread limit against a 512-thread request on an M2
-/// Max, upstream report). The limit is per chip and per compiled kernel, so
-/// only a run-time check sees it. A panic, not a `Result`, because no encode
-/// method returns one; FFI entry points already catch unwinds.
+/// Describes a dispatch that asks for a larger threadgroup than the compiled
+/// pipeline allows on this device, or `None` when it fits. Metal reports
+/// nothing for that: it skips the dispatch, the destination keeps its old
+/// contents and decode turns into fluent garbage (a 448-thread limit against
+/// a 512-thread request on an M2 Max, upstream report). The limit is per chip
+/// and per compiled kernel, so only a run-time check sees it.
+fn threadgroup_violation(
+    pipeline: &metal::ComputePipelineStateRef,
+    threads_per_group: (u64, u64, u64),
+) -> Option<String> {
+    let limit = pipeline.max_total_threads_per_threadgroup();
+    let asked = threadgroup_threads(threads_per_group);
+    (asked > limit).then(|| {
+        format!(
+            "dispatch of '{}' needs {asked} threads per threadgroup but this device allows {limit}",
+            crate::dispatch_profile::pipeline_name(pipeline)
+        )
+    })
+}
+
+/// Panicking form of [`threadgroup_violation`] for the standalone dispatch
+/// helpers, which return nothing. A pass records the violation instead (see
+/// [`PassEncoder::commit_and_wait_checked`]).
 pub(crate) fn assert_threadgroup_fits(
     pipeline: &metal::ComputePipelineStateRef,
     threads_per_group: (u64, u64, u64),
 ) {
-    let limit = pipeline.max_total_threads_per_threadgroup();
-    let asked = threadgroup_threads(threads_per_group);
-    assert!(
-        asked <= limit,
-        "dispatch of '{}' needs {asked} threads per threadgroup but this device allows {limit}",
-        crate::dispatch_profile::pipeline_name(pipeline)
-    );
+    if let Some(violation) = threadgroup_violation(pipeline, threads_per_group) {
+        panic!("{violation}");
+    }
 }
 
 fn threadgroup_threads((x, y, z): (u64, u64, u64)) -> u64 {
@@ -45,6 +57,11 @@ pub struct PassEncoder {
     /// Whether `endEncoding` has been sent. Read by the `Drop` impl below,
     /// which is what stops an error path aborting the process.
     ended: std::cell::Cell<bool>,
+    /// The first over-limit dispatch, which was skipped rather than encoded.
+    /// Encode methods return nothing, so the pass carries it to the commit:
+    /// the checked commit turns it into `Err` without committing, and the
+    /// unchecked ones panic, because their callers would read stale output.
+    violation: RefCell<Option<String>>,
 }
 
 impl PassEncoder {
@@ -58,6 +75,26 @@ impl PassEncoder {
             encoder,
             profile,
             ended: std::cell::Cell::new(false),
+            violation: RefCell::new(None),
+        }
+    }
+
+    /// Records `threads_per_group` against the pipeline limit and reports
+    /// whether the dispatch may be encoded. Only the first violation is kept,
+    /// since it is the one that names the kernel at fault.
+    fn admit(&self, pipeline: &ComputePipelineState, threads_per_group: (u64, u64, u64)) -> bool {
+        let Some(violation) = threadgroup_violation(pipeline, threads_per_group) else {
+            return true;
+        };
+        self.violation.borrow_mut().get_or_insert(violation);
+        false
+    }
+
+    /// The unchecked commits' half of the guard: there is no `Result` to
+    /// carry the violation, so stop before committing work with a hole in it.
+    fn panic_on_violation(&self) {
+        if let Some(violation) = self.violation.borrow().as_deref() {
+            panic!("{violation}");
         }
     }
 
@@ -96,7 +133,9 @@ impl PassEncoder {
         threadgroups: u64,
         threads_per_group: u64,
     ) {
-        assert_threadgroup_fits(pipeline, (threads_per_group, 1, 1));
+        if !self.admit(pipeline, (threads_per_group, 1, 1)) {
+            return;
+        }
         self.begin_dispatch(pipeline);
         let encoder = self.encoder.borrow();
         encoder.set_compute_pipeline_state(pipeline);
@@ -124,7 +163,9 @@ impl PassEncoder {
         threadgroups: (u64, u64, u64),
         threads_per_group: (u64, u64, u64),
     ) {
-        assert_threadgroup_fits(pipeline, threads_per_group);
+        if !self.admit(pipeline, threads_per_group) {
+            return;
+        }
         self.begin_dispatch(pipeline);
         let encoder = self.encoder.borrow();
         encoder.set_compute_pipeline_state(pipeline);
@@ -153,7 +194,9 @@ impl PassEncoder {
         grid: (u64, u64, u64),
         threadgroup: (u64, u64, u64),
     ) {
-        assert_threadgroup_fits(pipeline, threadgroup);
+        if !self.admit(pipeline, threadgroup) {
+            return;
+        }
         self.begin_dispatch(pipeline);
         let encoder = self.encoder.borrow();
         encoder.set_compute_pipeline_state(pipeline);
@@ -206,7 +249,13 @@ impl PassEncoder {
     }
 
     /// Return a device failure before a caller reads shared output memory.
+    /// A dispatch skipped for exceeding the thread limit is an error too, and
+    /// then nothing is committed: the pass's outputs keep their old contents.
     pub fn commit_and_wait_checked(self) -> Result<(), super::GpuError> {
+        if let Some(violation) = self.violation.borrow_mut().take() {
+            // Dropping the pass ends encoding without committing.
+            return Err(super::GpuError::InvalidInput(violation));
+        }
         let pass = self.commit();
         pass.command_buffer.wait_until_completed();
         crate::submit_probe::completed(&pass.command_buffer);
@@ -218,6 +267,16 @@ impl PassEncoder {
             )));
         }
         Ok(())
+    }
+
+    /// [`Self::commit`] for callers that pipeline buffers and still need the
+    /// thread-limit guard as an error: returns `Err` without committing when
+    /// a dispatch was skipped. Device faults surface later, at the wait.
+    pub fn commit_checked(self) -> Result<CommittedPass, super::GpuError> {
+        if let Some(violation) = self.violation.borrow_mut().take() {
+            return Err(super::GpuError::InvalidInput(violation));
+        }
+        Ok(self.commit())
     }
 
     /// [`Self::commit_and_wait`] that also reports the buffer's GPU-side
@@ -232,6 +291,7 @@ impl PassEncoder {
     /// wait on an earlier buffer to be woken as soon as *its* results are
     /// ready, with the later work still running.
     pub fn commit(mut self) -> CommittedPass {
+        self.panic_on_violation();
         // Already ended when `commit_signaling` encoded its signal.
         if !self.ended.get() {
             self.encoder.borrow().end_encoding();
@@ -379,6 +439,7 @@ impl PassEncoder {
     /// the host can watch the event instead of waiting on the buffer. The
     /// signal goes after the compute encoder ends, as Metal requires.
     pub(crate) fn commit_signaling(self, event: &metal::EventRef, value: u64) -> CommittedPass {
+        self.panic_on_violation();
         self.encoder.borrow().end_encoding();
         self.ended.set(true);
         self.command_buffer.encode_signal_event(event, value);
@@ -436,7 +497,12 @@ mod tests {
         assert_eq!(threadgroup_threads((u64::MAX, 2, 1)), u64::MAX);
     }
 
-    fn probe(extra: u64) {
+    const SENTINEL: u32 = 0xDEAD_BEEF;
+
+    /// Encodes one `guard_probe` dispatch `extra` threads past the device
+    /// limit and hands the pass, the output buffer and the limit to `finish`.
+    /// The output word starts at `SENTINEL`, so a skipped dispatch is visible.
+    fn probe<R>(extra: u64, finish: impl FnOnce(PassEncoder, &metal::Buffer, u64) -> R) -> R {
         let context = MetalContext::new().expect("Metal device");
         let device = context.device();
         let library = device
@@ -447,23 +513,76 @@ mod tests {
             .new_compute_pipeline_state_with_function(&function)
             .expect("pipeline");
         let out = device.new_buffer(64, metal::MTLResourceOptions::StorageModeShared);
+        // SAFETY: a live 64-byte shared buffer, written before any GPU use.
+        #[allow(unsafe_code)]
+        unsafe {
+            *out.contents().cast::<u32>() = SENTINEL;
+        }
         let queue = context.queue();
         let buffer = queue.new_command_buffer().to_owned();
         let encoder = buffer.new_compute_command_encoder().to_owned();
         let pass = PassEncoder::new(buffer, std::cell::RefCell::new(encoder), None);
-        let threads = pipeline.max_total_threads_per_threadgroup() + extra;
-        pass.encode_threadgroups(&pipeline, &[(&out, 0, 0)], &[], 1, threads);
-        pass.commit_and_wait();
+        let limit = pipeline.max_total_threads_per_threadgroup();
+        pass.encode_threadgroups(&pipeline, &[(&out, 0, 0)], &[], 1, limit + extra);
+        finish(pass, &out, limit)
+    }
+
+    fn first_word(out: &metal::Buffer) -> u32 {
+        // SAFETY: a live shared buffer the GPU is no longer using.
+        #[allow(unsafe_code)]
+        unsafe {
+            *out.contents().cast::<u32>()
+        }
     }
 
     #[test]
     fn a_threadgroup_at_the_device_limit_dispatches() {
-        probe(0);
+        probe(0, |pass, out, _| {
+            pass.commit_and_wait_checked()
+                .expect("dispatch at the limit");
+            assert_ne!(first_word(out), SENTINEL, "the dispatch did not run");
+        });
+    }
+
+    #[test]
+    fn a_threadgroup_past_the_limit_is_an_error_on_the_checked_commit() {
+        let (result, word, limit) = probe(1, |pass, out, limit| {
+            let result = pass.commit_and_wait_checked();
+            (result, first_word(out), limit)
+        });
+        let message = result
+            .expect_err("over-limit dispatch must fail")
+            .to_string();
+        assert!(message.contains("dispatch of '"), "{message}");
+        assert!(
+            message.contains(&format!("needs {}", limit + 1)),
+            "{message}"
+        );
+        assert!(message.contains(&format!("allows {limit}")), "{message}");
+        // Nothing was committed, so the output keeps its old contents.
+        assert_eq!(word, SENTINEL);
+    }
+
+    #[test]
+    fn the_non_waiting_checked_commit_errors_or_commits() {
+        let err = probe(1, |pass, _, _| pass.commit_checked().err());
+        assert!(err.is_some_and(|e| e.to_string().contains("threads per threadgroup")));
+        let word = probe(0, |pass, out, _| {
+            pass.commit_checked().expect("dispatch at the limit").wait();
+            first_word(out)
+        });
+        assert_ne!(word, SENTINEL, "the dispatch did not run");
     }
 
     #[test]
     #[should_panic(expected = "threads per threadgroup")]
-    fn a_threadgroup_past_the_device_limit_panics_before_encoding() {
-        probe(1);
+    fn a_threadgroup_past_the_limit_panics_on_the_unchecked_commit() {
+        probe(1, |pass, _, _| pass.commit_and_wait());
+    }
+
+    #[test]
+    #[should_panic(expected = "threads per threadgroup")]
+    fn a_threadgroup_past_the_limit_panics_on_a_bare_commit() {
+        probe(1, |pass, _, _| drop(pass.commit()));
     }
 }

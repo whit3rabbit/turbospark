@@ -40,6 +40,17 @@ when this file gets updated relative to the version bump and the tag.
   profile (text and image, 471 MB against 1.48 GB), status `runs`. The Core ML
   host now reads int8 token tables with per-row fp16 scales and opens installs
   without an audio tower. See `docs/COREML.md`.
+- tslab: `idle-gap` cause arms (`TURBOSPARK_LAB_IDLE_PRESTEP=wake|touch|prewarm|touch-all`)
+  and keep-warm arms (`TURBOSPARK_LAB_IDLE_KEEPWARM_MS`,
+  `TURBOSPARK_LAB_IDLE_KEEPWARM`) with GPU power-state, energy and memory
+  readings, and `kernel --bench gdn_delta --oracle on`, which
+  checks the GDN delta kernels against an FP64 reference.
+- Inkling 2: an opt-in bounded keep-warm for resident installs
+  (`TURBOSPARK_INKLING2_KEEPWARM_MS=<50..5000>`, window
+  `TURBOSPARK_INKLING2_KEEPWARM_WINDOW_S`, default 120 s). Off by default.
+  While the runner is idle it names the resident buffers so macOS keeps them
+  mapped, which removes most of the first-pass stall after 1 to 2 s idle; it
+  stops after the window and pauses under memory pressure.
 
 ### Performance
 - Qwen2 and Qwen2.5 prompt processing multiplies each projection once per
@@ -53,6 +64,15 @@ when this file gets updated relative to the version bump and the tag.
   large vocabularies and long contexts, with the same results.
 
 ### Changed
+- GGUF Q4_K tensors decode and verify through new wide-load kernels by default:
+  1.5x to 1.9x the previous kernel's bandwidth on real Q4_K bytes, and 1.4x to
+  2.4x for speculative verify. Output moves within a mean KL of about 1e-5 nats
+  (Qwen3 8B Q4_K_M), so it is not bit-identical to the previous kernel.
+  `TURBOSPARK_GGUF_KERNEL=current` restores it.
+- GGUF Q8_0 tensors also decode and verify through wide-load kernels by
+  default: Qwen3 8B Q8_0 decodes about 1.4x to 1.5x faster, with a mean KL of
+  about 1.5e-5 nats and the same greedy tokens. `TURBOSPARK_GGUF_KERNEL=current`
+  restores the previous Q4_K and Q8_0 kernels together.
 - `/v1/chat/completions` now answers 400 to `n` greater than 1 and to a
   `json_schema` response format with `strict: true`. Both were accepted before
   with only the `x-anyllm-degradation` header, so a client got one choice, or
@@ -65,6 +85,9 @@ when this file gets updated relative to the version bump and the tag.
 - A tslab spec's arms may differ only in `knob_env` unless declared in
   `also_changes`, and a decoding workload is now gated on its decode path too.
 - The app's `dflash` drafter choice is now labelled "Block Drafter".
+- A GPU dispatch that asks for more threads per threadgroup than the device
+  allows now fails the generation with an error naming the kernel, instead of
+  panicking the process. Device-fault handling is unchanged.
 
 ### Fixed
 - Qwen3-TTS streaming decode no longer adds the codec's transposed-conv

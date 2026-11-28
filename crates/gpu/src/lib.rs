@@ -123,6 +123,9 @@ mod inkling2_batch;
 mod inkling2_dspark;
 #[cfg(target_os = "macos")]
 mod inkling2_ops;
+/// Opt-in bounded keep-warm for resident buffers (KERN-05 Step 3).
+#[cfg(target_os = "macos")]
+mod keep_warm;
 #[cfg(target_os = "macos")]
 mod kv_cache;
 #[cfg(target_os = "macos")]
@@ -181,6 +184,14 @@ mod short_conv;
 mod short_conv_state;
 #[cfg(target_os = "macos")]
 pub mod submit_probe;
+/// Lab-only idle-stall probes (KERN-05 Step 1a).
+#[cfg(target_os = "macos")]
+pub mod touch;
+#[cfg(target_os = "macos")]
+pub use keep_warm::{
+    keep_warm_tick, KeepWarm, KeepWarmConfig, KeepWarmStats, KeepWarmTick,
+    KEEP_WARM_DEFAULT_WINDOW_S, KEEP_WARM_EVERY_MS_RANGE, KEEP_WARM_WINDOW_S_RANGE,
+};
 #[cfg(target_os = "macos")]
 mod utility;
 #[cfg(target_os = "macos")]
@@ -301,7 +312,8 @@ pub use dequant_iq_gemv::{
 #[cfg(target_os = "macos")]
 pub use dequant_kquant_gemm_batch::{
     bf16_gemm_resident, dequant_kquant_gemm_resident, encode_bf16_gemm_resident,
-    encode_dequant_kquant_gemm_resident, KQuantBatchType, KQuantResidentMatrix,
+    encode_dequant_kquant_gemm_resident, encode_dequant_q4_k_gemm_resident_choose, KQuantBatchType,
+    KQuantResidentMatrix,
 };
 #[cfg(target_os = "macos")]
 pub use dequant_legacy_gemv::{
@@ -322,9 +334,11 @@ pub use dequant_q3_k_gemv::{
 };
 #[cfg(target_os = "macos")]
 pub use dequant_q4_k_gemv::{
-    dequant_q4_k_gemv, dequant_q4_k_gemv_resident, encode_dequant_q4_k_gemv_resident,
-    encode_embed_lookup_q4_k, q4_k_row_bytes, Q4KResidentMatrix, Q4_K_BLOCK_BYTES,
-    Q4_K_BLOCK_ELEMS,
+    dequant_q4_k_gemv, dequant_q4_k_gemv_resident, dequant_q4_k_gemv_resident_wide,
+    dequant_q4_k_gemv_resident_wide_unroll, encode_dequant_q4_k_gemv_resident,
+    encode_dequant_q4_k_gemv_resident_wide, encode_dequant_q4_k_gemv_resident_wide_unroll,
+    encode_embed_lookup_q4_k, q4_k_row_bytes, q4_k_wide_selected, q8_0_wide_selected,
+    Q4KResidentMatrix, Q4_K_BLOCK_BYTES, Q4_K_BLOCK_ELEMS,
 };
 #[cfg(target_os = "macos")]
 pub use dequant_q5_k_gemv::{
@@ -340,7 +354,8 @@ pub use dequant_q6_k_gemv::{
 };
 #[cfg(target_os = "macos")]
 pub use dequant_q8_0_gemv::{
-    dequant_q8_0_gemv, dequant_q8_0_gemv_resident, encode_dequant_q8_0_gemv_resident,
+    dequant_q8_0_gemv, dequant_q8_0_gemv_resident, dequant_q8_0_gemv_resident_wide,
+    encode_dequant_q8_0_gemv_resident, encode_dequant_q8_0_gemv_resident_wide,
     encode_embed_lookup_q8_0, q8_0_row_bytes, Q8_0ResidentMatrix, Q8_0_BLOCK_BYTES,
     Q8_0_BLOCK_ELEMS,
 };

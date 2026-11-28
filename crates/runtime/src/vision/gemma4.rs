@@ -609,7 +609,7 @@ pub(crate) fn forward(
         .map_err(e)?;
         gpu::encode_vision_residual_add(context, &pass, (&s.h, 0), (&pb, 0), (n * hid) as u32)
             .map_err(e)?;
-        pass.commit_and_wait();
+        pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
         if let Some(c) = capture.as_deref_mut() {
             c.patch_embed = read_f32(&s.h, n * hid);
         }
@@ -617,7 +617,7 @@ pub(crate) fn forward(
         for block in 0..d.depth {
             let pass = context.begin_pass();
             encode_nth_block(context, &pass, block, &s)?;
-            pass.commit_and_wait();
+            pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
             if let Some(c) = capture.as_deref_mut() {
                 c.blocks.push(read_f32(&s.h, n * hid));
             }
@@ -677,7 +677,7 @@ pub(crate) fn forward(
             d.text_hidden as u32,
         )
         .map_err(e)?;
-        pass.commit_and_wait();
+        pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
         Ok(gpu::read_buffer_f16(&out, 0, soft * d.text_hidden)
             .into_iter()
             .map(|v| v.to_bits())

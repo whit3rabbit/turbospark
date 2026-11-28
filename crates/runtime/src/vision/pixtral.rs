@@ -647,7 +647,7 @@ impl PixtralVisionTower {
                 EPS,
             )
             .map_err(e)?;
-            pass.commit_and_wait();
+            pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
             if let Some(c) = stages.as_mut() {
                 c.embed = read_bits(&s.x, wide);
             }
@@ -664,7 +664,7 @@ impl PixtralVisionTower {
                 };
                 let pass = context.begin_pass();
                 encode_block(context, &pass, &binding, &s, &d)?;
-                pass.commit_and_wait();
+                pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
                 if let Some(c) = stages.as_mut() {
                     if n == 0 {
                         c.block_first = read_bits(&s.x, wide);
@@ -709,7 +709,7 @@ impl PixtralVisionTower {
                 d.out_hidden as u32,
             )
             .map_err(e)?;
-            pass.commit_and_wait();
+            pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
 
             Ok((read_bits(&s.out, seq * d.out_hidden), stages))
         })

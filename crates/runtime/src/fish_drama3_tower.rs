@@ -738,7 +738,7 @@ impl TowerModel for MetalTower {
                 (&self.logits, 0),
             )
             .map_err(gpu_err)?;
-            pass.commit_and_wait();
+            pass.commit_checked().map_err(gpu_err)?.wait();
             Ok(())
         })?;
         Ok(self.read_logits(rows))
@@ -793,7 +793,7 @@ impl TowerModel for MetalTower {
                             .map_err(gpu_err)?;
                     }
                 }
-                pass.commit_and_wait();
+                pass.commit_checked().map_err(gpu_err)?.wait();
                 Ok(())
             })?;
             self.position += end - start;
@@ -895,7 +895,7 @@ impl MetalTower {
                 (&logits, 0),
             )
             .map_err(gpu_err)?;
-            pass.commit_and_wait();
+            pass.commit_checked().map_err(gpu_err)?.wait();
             Ok(())
         })?;
         Ok(self.read_logits(self.cfg.vocab_size))

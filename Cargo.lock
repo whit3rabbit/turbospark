@@ -2545,6 +2545,7 @@ dependencies = [
  "turbospark-audio",
  "turbospark-bench",
  "turbospark-catalog",
+ "turbospark-compute",
  "turbospark-core",
  "turbospark-coreml",
  "turbospark-gpu",

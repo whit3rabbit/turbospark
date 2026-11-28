@@ -191,7 +191,10 @@ impl RealForwardRunner {
             )
             .map_err(gpu_err)?;
             let old_pass = std::mem::replace(pass, self.context.begin_pass());
-            old_pass.commit_and_wait();
+            old_pass
+                .commit_checked()
+                .map_err(RealForwardError::Gpu)?
+                .wait();
 
             let router_logits = f16_to_f32(&gpu::read_buffer_f16(
                 &self.scratch.router_logits,
@@ -257,7 +260,10 @@ impl RealForwardRunner {
             .map_err(gpu_err)?;
         } else if self.arch.num_experts > 0 {
             let old_pass = std::mem::replace(pass, self.context.begin_pass());
-            old_pass.commit_and_wait();
+            old_pass
+                .commit_checked()
+                .map_err(RealForwardError::Gpu)?
+                .wait();
             let pre_ffn32 = f16_to_f32(&gpu::read_buffer_f16(&self.scratch.normed, 0, hidden));
             let combined = self.moe_ffn_host(layer, &pre_ffn32)?;
             gpu::write_buffer_bytes(
