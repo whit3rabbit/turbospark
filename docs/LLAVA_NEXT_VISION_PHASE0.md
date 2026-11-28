@@ -102,7 +102,8 @@ Synthetic, no real weights:
   and speed are all unmeasured. The resize is not compared against PIL here.
 - The CLI `--image` path compiles (it is the CLIP arm plus the template flag)
   and has not been run on a 1.6 install.
-- The Swift app does not attach vision sidecars. No catalog rows.
+- The Swift app attaches sidecars (`visionSidecar` `auto`, added 2026-11-28) but
+  has not been run with this tower. No catalog rows.
 - 1008-wide or tall grids and multiple images have not been run end to end.
 - A 2928-token image does not fit twice in the Vicuna trunk's 4096 context.
 - The 34B and Llama-3 builds were not checked.

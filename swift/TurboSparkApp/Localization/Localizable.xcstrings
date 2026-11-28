@@ -465425,6 +465425,268 @@
         }
       }
     },
+    "Loaded %@ without image input. %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تم تحميل %1$@ دون إدخال الصور. %2$@"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ ohne Bildeingabe geladen. %2$@"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Loaded %1$@ without image input. %2$@"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ se cargó sin entrada de imágenes. %2$@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ chargé sans saisie d’images. %2$@"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "‏%1$@ נטען ללא קלט תמונה. %2$@"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ को इमेज इनपुट के बिना लोड किया गया। %2$@"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ dimuat tanpa input gambar. %2$@"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ caricato senza input di immagini. %2$@"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ を画像入力なしで読み込みました。%2$@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@을(를) 이미지 입력 없이 불러왔습니다. %2$@"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ geladen zonder afbeeldingsinvoer. %2$@"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wczytano %1$@ bez wejścia obrazów. %2$@"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ carregado sem entrada de imagens. %2$@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Модель %1$@ загружена без ввода изображений. %2$@"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ lästes in utan bildinmatning. %2$@"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ görüntü girişi olmadan yüklendi. %2$@"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Модель %1$@ завантажено без введення зображень. %2$@"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Đã tải %1$@ không có đầu vào hình ảnh. %2$@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已加载 %1$@，但不支持图像输入。%2$@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已載入 %1$@，但不支援圖片輸入。%2$@"
+          }
+        }
+      }
+    },
+    "%@ is a vision add-on. It attaches by itself when you load a matching model.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ إضافة للرؤية. تُرفق تلقائيًا عند تحميل نموذج مطابق."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ ist eine Bild-Erweiterung. Sie wird beim Laden eines passenden Modells automatisch angehängt."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ is a vision add-on. It attaches by itself when you load a matching model."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ es un complemento de visión. Se acopla solo al cargar un modelo compatible."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ est un module de vision. Il se rattache tout seul quand vous chargez un modèle compatible."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "‏%@ הוא תוסף ראייה. הוא מתחבר מעצמו כשטוענים מודל תואם."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ एक विज़न ऐड-ऑन है। मेल खाता मॉडल लोड करने पर यह अपने आप जुड़ जाता है।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ adalah add-on visi. Add-on ini terpasang sendiri saat Anda memuat model yang cocok."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ è un componente aggiuntivo di visione. Si collega da solo quando carichi un modello compatibile."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ は画像認識の追加モジュールです。対応するモデルを読み込むと自動的に接続されます。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@은(는) 비전 애드온입니다. 맞는 모델을 불러오면 자동으로 연결됩니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ is een vision-uitbreiding. Deze wordt vanzelf gekoppeld wanneer je een passend model laadt."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ to dodatek wizyjny. Dołącza się sam po wczytaniu pasującego modelu."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ é um complemento de visão. Ele se conecta sozinho quando você carrega um modelo compatível."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ — это дополнение для зрения. Оно подключается само при загрузке подходящей модели."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ är ett synstillägg. Det ansluts av sig självt när du läser in en passande modell."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ bir görme eklentisidir. Uyumlu bir model yüklediğinizde kendiliğinden bağlanır."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ — це доповнення для зору. Воно підключається саме під час завантаження відповідної моделі."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ là tiện ích thị giác. Nó tự gắn khi bạn tải một mô hình tương thích."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 是视觉附加组件。加载匹配的模型时会自动挂接。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 是視覺附加元件。載入相符的模型時會自動掛接。"
+          }
+        }
+      }
+    },
     "Remove from %@": {
       "extractionState": "manual",
       "localizations": {

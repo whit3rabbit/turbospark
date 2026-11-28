@@ -239,8 +239,8 @@ still runs DSpark (`--speculative 4 --speculative-drafter dflash`).
   behavioral only; its image token count was not observed); trunk logits with
   an image against a reference; the HF, LAMQ and GGUF installs (only
   `inkling2-mini-mlx4` is installed here); `ts_generate` and the macOS app
-  (the app does not attach vision sidecars at all, so it cannot reach this
-  tower yet); multi-image prompts; an image over the 4,096-tile cap end to
+  (the app attaches vision sidecars since 2026-11-28, but no run of this tower
+  through it is recorded); multi-image prompts; an image over the 4,096-tile cap end to
   end; speculation on an image turn (refused by name); a frozen memory or
   quality row.
 - Not done: the session `LoadGuard` clamp on the tile cap. The cap is the

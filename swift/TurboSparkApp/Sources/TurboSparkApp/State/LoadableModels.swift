@@ -25,7 +25,10 @@ enum LoadableModelList {
     /// `installed`'s order.
     static func filter(installed: [InstalledModel], live: [InstalledModel]) -> [InstalledModel] {
         let index = liveIndex(live)
-        return installed.filter { availability(of: $0, index: index) == .available }
+        // A vision sidecar is installed beside the models and cannot be loaded.
+        return installed.filter {
+            !VisionSidecar.isAddOn($0) && availability(of: $0, index: index) == .available
+        }
     }
 
     /// `row`'s availability as the full list says it now.

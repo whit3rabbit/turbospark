@@ -122,8 +122,13 @@ extension AppModel {
         guard canOpenNow(model) else { return }
         loadObserver?(model)
         do {
-            let session = try await TurboSparkSession(
-                modelPath: model.path, options: buildOpenOptions(modelPath: model.path))
+            let opened = try await VisionSidecar.open(buildOpenOptions(modelPath: model.path)) {
+                try await TurboSparkSession(modelPath: model.path, options: $0)
+            }
+            let session = opened.session
+            if let reason = opened.skipped {
+                announceVisionSidecarSkipped(alias: model.alias, reason: reason)
+            }
             // **THE SERVER CAN BE STOPPED WHILE THIS OPEN IS IN FLIGHT**
             // (state#72). `stopServer()` has no `serverBusy` guard on
             // purpose (state#28 needs it reachable during a bind), and it

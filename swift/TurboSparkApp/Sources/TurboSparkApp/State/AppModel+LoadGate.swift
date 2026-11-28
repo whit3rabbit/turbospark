@@ -101,6 +101,11 @@ extension AppModel {
             announceModelBeingMoved()
             return .busy
         }
+        // A sidecar's row can still be asked for by name or from its detail pane.
+        if VisionSidecar.isAddOn(model) {
+            announceVisionSidecarIsNotAModel(model)
+            return .busy
+        }
         let resident = loadedModelPath == model.path
         if resident, case .chat(let switchToChat) = purpose {
             // Already in memory: nothing is read, nothing is warned about.
@@ -175,6 +180,10 @@ extension AppModel {
         // reload, a server attach and a favorite's auto-start all end here.
         if isMoving(model) {
             announceModelBeingMoved()
+            return false
+        }
+        if VisionSidecar.isAddOn(model) {
+            announceVisionSidecarIsNotAModel(model)
             return false
         }
         let gate = loadGate(for: model)

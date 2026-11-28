@@ -14,6 +14,10 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- The macOS app attaches an installed vision sidecar when it loads a matching
+  model that has no tower of its own, and no longer offers the sidecar itself
+  as a loadable model. A sidecar that cannot attach leaves the model text-only
+  with a notice. Not yet run with real weights in the app.
 - `mage_vl` still-image input for MLX conversions installed with `pull --repo`; synthetic tests only, no video. See `docs/MAGE_VL_VISION_PHASE0.md`.
 - LLaVA 1.6 (`llava_next`) image input as a `pull-vision` sidecar of its GGUF
   `llama` trunk (CLI, server, C ABI); tested on synthetic weights only. See `docs/LLAVA_NEXT_VISION_PHASE0.md`.

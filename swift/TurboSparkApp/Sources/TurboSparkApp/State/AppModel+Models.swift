@@ -235,6 +235,9 @@ extension AppModel {
         default:
             options.kvBits = runtimeOptions.kvBits.kvBits
         }
+        // Image input from an installed sidecar, for a model with no tower of
+        // its own. Opening goes through `VisionSidecar.open`.
+        options.visionSidecar = VisionSidecar.automatic
         options.anePrefill = runtimeOptions.anePrefill.anePrefill
         options.expertSlotsWiring = runtimeOptions.expertSlotsWiring.expertSlotsWiring
         // `.auto` needs no install facts; the others ask the engine what this
@@ -350,7 +353,10 @@ extension AppModel {
             let options = buildOpenOptions(modelPath: model.path)
             let steeringConfiguration = AppSteeringPolicy.configuration(
                 enabled: steeringEnabled, preset: resolvedSteeringPreset)
-            session = try await TurboSparkSession(modelPath: model.path, options: options)
+            let opened = try await VisionSidecar.open(options) {
+                try await TurboSparkSession(modelPath: model.path, options: $0)
+            }
+            session = opened.session
             loadedSteeringConfiguration = steeringConfiguration
             sessionModelPath = model.path
             selected = model
@@ -377,6 +383,10 @@ extension AppModel {
                 )
             } else {
                 showToast(AppStrings.localized("Loaded \(model.alias)"), style: .success)
+            }
+            // Last, so it is the notice that stays on screen.
+            if let reason = opened.skipped {
+                announceVisionSidecarSkipped(alias: model.alias, reason: reason)
             }
             if self.server != nil {
                 self.attachChatSession()
