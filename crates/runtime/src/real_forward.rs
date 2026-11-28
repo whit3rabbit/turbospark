@@ -386,6 +386,9 @@ pub struct RealForwardRunner {
     /// the two towers share no weights layout or forward pass; `None` means
     /// "not yet asked for", as with `vision`.
     pub(crate) gemma4_vision: Option<crate::vision::gemma4::Gemma4VisionTower>,
+    /// The `gemma4_unified` embedder, the encoder-free sibling behind the
+    /// same [`RealForwardRunner::encode_image_gemma4`].
+    pub(crate) gemma4_unified_vision: Option<crate::vision::gemma4_unified::Gemma4UnifiedEmbedder>,
     /// The Qwen2.5-VL tower, opened lazily on the first image like the others.
     pub(crate) qwen25_vision: Option<crate::vision::qwen25::Qwen25VisionTower>,
     /// The Qwen2-VL tower (the pre-2.5 sibling), opened lazily on the first

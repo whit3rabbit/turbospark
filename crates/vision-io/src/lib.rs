@@ -49,6 +49,7 @@ pub mod gemma4;
 pub mod idefics3;
 pub mod inkling2;
 pub mod internvl;
+mod llava_next;
 pub mod minicpm;
 pub mod mrope;
 pub mod muse;
@@ -100,7 +101,12 @@ pub use inkling2::{
 };
 pub use internvl::{
     internvl_expand_image_placeholders, internvl_pixel_shuffle, internvl_preprocess,
-    internvl_tile_grid, InternVlParams, InternVlTiles, INTERNVL_MEAN, INTERNVL_STD,
+    internvl_tile_grid, InternVlLayout, InternVlParams, InternVlTiles, INTERNVL_IMAGE_MARKER_TEXT,
+    INTERNVL_MEAN, INTERNVL_STD,
+};
+pub use llava_next::{
+    llava_next_image_tokens, llava_next_pack_features, llava_next_preprocess, NEXT_SIDE, NEXT_TILE,
+    NEXT_TILE_PATCHES,
 };
 pub use minicpm::{
     canvas_positions, minicpm_preprocess, minicpm_resize_dims, minicpm_splice_and_positions,

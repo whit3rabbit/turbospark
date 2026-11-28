@@ -58,9 +58,12 @@ mod resident_writer;
 mod safetensors_header;
 mod synthetic_deepseek2;
 mod synthetic_flint;
+mod synthetic_gemma4_unified;
 mod synthetic_gguf;
 mod synthetic_lfm3;
 mod synthetic_llama;
+mod synthetic_llava_next;
+mod synthetic_mage;
 mod synthetic_model;
 mod synthetic_muse;
 #[cfg(test)]
@@ -92,51 +95,54 @@ pub use flint_rebalance::{
 pub use gemma4_checkpoint::{
     canonicalize_deepseek_vl2_header, canonicalize_flint_header, canonicalize_idefics3_header,
     canonicalize_internvl_header, canonicalize_qwen2_header, canonicalize_vision_header,
-    classify_for_family, classify_gemma4, convert_raw_to_fp16, gemma4_manifest_quant,
-    gguf_mxfp4_row_bytes, graft_qwen_gdn_dense_mtp_head, is_supported_affine_shape, manifest_quant,
-    manifest_quant_for, mlx_mxfp4_dequant_to_bf16, mlx_mxfp4_reblock_to_gguf, narrow_raw_to_bf16,
-    orchestrate_gemma4_checkpoint, orchestrate_gemma4_checkpoint_sharded,
-    parse_deepseek_ocr_vision_config, parse_deepseek_vl2_vision_config, parse_gemma4_config,
-    parse_gemma4_quantization, parse_gemma4_vision_config, parse_idefics3_vision_config,
+    classify_for_family, classify_gemma4, convert_raw_to_fp16, drop_gemma4_unified_audio,
+    gemma4_manifest_quant, gguf_mxfp4_row_bytes, graft_qwen_gdn_dense_mtp_head,
+    is_supported_affine_shape, manifest_quant, manifest_quant_for, mlx_mxfp4_dequant_to_bf16,
+    mlx_mxfp4_reblock_to_gguf, narrow_raw_to_bf16, orchestrate_gemma4_checkpoint,
+    orchestrate_gemma4_checkpoint_sharded, parse_deepseek_ocr_vision_config,
+    parse_deepseek_vl2_vision_config, parse_gemma4_config, parse_gemma4_quantization,
+    parse_gemma4_unified_vision_config, parse_gemma4_vision_config, parse_idefics3_vision_config,
     parse_inkling2_vision_config, parse_internvl_vision_config, parse_lfm3_vl_vision_config,
-    parse_llava_onevision_vision_config, parse_llava_vision_config, parse_pixtral_vision_config,
-    parse_prism_hadamard, pass_through_packed, pass_through_packed_qwen2,
-    pixtral_special_token_ids, read_clip_vision_entries, read_deepseek_ocr_vision_entries,
-    read_idefics3_vision_entries, read_inkling2_vision_entries, read_internvl_vision_entries,
-    read_onevision_vision_entries, read_pixtral_vision_entries, read_siglip_vision_entries,
-    read_vision_entries, read_vision_entries_quantized, vision_arch_for_manifest,
-    vision_should_ingest, write_deepseek_vl2_install_streamed, write_flint_install_streamed,
-    write_gemma4_install, write_gemma4_install_streamed, write_lfm3_install_streamed,
-    write_llama_dense_install_streamed, write_muse_glimmer_install,
-    write_muse_glimmer_install_streamed, write_ngram_table, write_qwen2_dense_install_streamed,
-    write_qwen3_dense_install_streamed, write_qwen3_vl_install_streamed,
-    write_qwen4_exp_install_streamed, write_qwen_gdn_dense_install,
-    write_qwen_gdn_dense_install_streamed, write_qwen_gdn_dense_install_streamed_with_hadamard,
-    write_qwen_gdn_moe_install, write_qwen_gdn_moe_install_streamed,
-    write_unlimited_ocr2_install_streamed, write_vision_sidecar, ConvertedFp16, Gemma4Bucket,
-    Gemma4Error, Gemma4Quant, Gemma4RepackOutput, Gemma4Shards, NarrowedRaw, NgramPlan,
-    NgramTableSpec, NgramTableWriter, PrismHadamard, QuantMode, VisionRead, AFFINE_1BIT_GROUP_SIZE,
-    AFFINE_2BIT_GROUP_SIZE, AFFINE_GROUP_SIZE, CLIP_MODEL_PREFIX, CLIP_PROJECTOR_PREFIX,
-    CLIP_RESIDENT_TENSORS, CLIP_SOURCE_PREFIXES, DEEPSEEK_OCR_IMAGE_TOKEN_ID,
-    DEEPSEEK_OCR_MODEL_TYPE, DEEPSEEK_VL2_IMAGE_TOKEN_ID, DEEPSEEK_VL2_MODEL_TYPE, DFLASH_PREFIX,
-    EMBED_VISION_PREFIX, GEMMA4_BLOCK_ROLES, GEMMA4_PROJECTOR_INSTALL_NAME,
-    GEMMA4_RESIDENT_TENSORS, GTURBO_PAGE_BYTES, IDEFICS3_BLOCK_ROLES, IDEFICS3_CONNECTOR_PREFIX,
-    IDEFICS3_MODEL_TYPE, IDEFICS3_PROJECTOR_PREFIX, IDEFICS3_TOWER_PREFIX,
-    INKLING2_CONTENT_IMAGE_ID, INKLING2_IMAGE_TOKEN_ID, INKLING2_MODEL_TYPE,
+    parse_llava_next_vision_config, parse_llava_onevision_vision_config, parse_llava_vision_config,
+    parse_mage_vl_vision_config, parse_pixtral_vision_config, parse_prism_hadamard,
+    pass_through_packed, pass_through_packed_qwen2, pixtral_special_token_ids,
+    read_clip_vision_entries, read_deepseek_ocr_vision_entries, read_idefics3_vision_entries,
+    read_inkling2_vision_entries, read_internvl_vision_entries, read_onevision_vision_entries,
+    read_pixtral_vision_entries, read_siglip_vision_entries, read_vision_entries,
+    read_vision_entries_quantized, vision_arch_for_manifest, vision_should_ingest,
+    write_deepseek_vl2_install_streamed, write_flint_install_streamed, write_gemma4_install,
+    write_gemma4_install_streamed, write_lfm3_install_streamed, write_llama_dense_install_streamed,
+    write_muse_glimmer_install, write_muse_glimmer_install_streamed, write_ngram_table,
+    write_qwen2_dense_install_streamed, write_qwen3_dense_install_streamed,
+    write_qwen3_vl_install_streamed, write_qwen4_exp_install_streamed,
+    write_qwen_gdn_dense_install, write_qwen_gdn_dense_install_streamed,
+    write_qwen_gdn_dense_install_streamed_with_hadamard, write_qwen_gdn_moe_install,
+    write_qwen_gdn_moe_install_streamed, write_unlimited_ocr2_install_streamed,
+    write_vision_sidecar, ConvertedFp16, Gemma4Bucket, Gemma4Error, Gemma4Quant,
+    Gemma4RepackOutput, Gemma4Shards, NarrowedRaw, NgramPlan, NgramTableSpec, NgramTableWriter,
+    PrismHadamard, QuantMode, VisionRead, AFFINE_1BIT_GROUP_SIZE, AFFINE_2BIT_GROUP_SIZE,
+    AFFINE_GROUP_SIZE, CLIP_MODEL_PREFIX, CLIP_NEXT_NEWLINE, CLIP_NEXT_NEWLINE_RESIDENT,
+    CLIP_NEXT_SOURCE_PREFIXES, CLIP_PROJECTOR_PREFIX, CLIP_RESIDENT_TENSORS, CLIP_SOURCE_PREFIXES,
+    DEEPSEEK_OCR_IMAGE_TOKEN_ID, DEEPSEEK_OCR_MODEL_TYPE, DEEPSEEK_VL2_IMAGE_TOKEN_ID,
+    DEEPSEEK_VL2_MODEL_TYPE, DFLASH_PREFIX, EMBED_VISION_PREFIX, GEMMA4_BLOCK_ROLES,
+    GEMMA4_PROJECTOR_INSTALL_NAME, GEMMA4_RESIDENT_TENSORS, GEMMA4_UNIFIED_EMBEDDER_PREFIX,
+    GEMMA4_UNIFIED_MODEL_TYPE, GEMMA4_UNIFIED_ROLES, GTURBO_PAGE_BYTES, IDEFICS3_BLOCK_ROLES,
+    IDEFICS3_CONNECTOR_PREFIX, IDEFICS3_MODEL_TYPE, IDEFICS3_PROJECTOR_PREFIX,
+    IDEFICS3_TOWER_PREFIX, INKLING2_CONTENT_IMAGE_ID, INKLING2_IMAGE_TOKEN_ID, INKLING2_MODEL_TYPE,
     INKLING2_RESIDENT_TENSORS, INTERNVL_BLOCK_ROLES, INTERNVL_CHAT_MODEL_TYPE,
     INTERNVL_CHAT_PROJECTOR_PREFIX, INTERNVL_CHAT_TOWER_PREFIX, INTERNVL_MODEL_TYPE,
-    INTERNVL_PROJECTOR_PREFIX, INTERNVL_TOWER_PREFIX, LLAVA_MODEL_TYPE, MINICPM_BLOCK_ROLES,
-    MINICPM_MERGER, MINICPM_MERGER_PREFIX, MINICPM_SOURCE_PREFIXES, MINICPM_TOWER_RESIDENT,
-    MINICPM_VIT_MERGER, MINICPM_VIT_MERGER_PREFIX, MTP_PREFIX, MUSE_BLOCK_SOURCES,
-    MUSE_RESIDENT_TENSORS, MUSE_SOURCE_PREFIXES, OCR_SAM_PREFIX, OCR_SOURCE_PREFIXES,
-    ONEVISION_MODEL_TYPE, ONEVISION_NEWLINE, ONEVISION_RESIDENT_TENSORS, ONEVISION_SOURCE_PREFIXES,
-    PIXTRAL_BLOCK_ROLES, PIXTRAL_MODEL_TYPE, PIXTRAL_PROJECTOR_PREFIX, PIXTRAL_RESIDENT_TENSORS,
-    PIXTRAL_SOURCE_PREFIXES, PIXTRAL_TOWER_PREFIX, SIGLIP_MODEL_PREFIX, SIGLIP_PROJECTOR_PREFIX,
-    SIGLIP_RESIDENT_TENSORS, SIGLIP_SOURCE_PREFIXES, SMOLVLM_MODEL_TYPE, UNLIMITED_OCR_MODEL_TYPE,
-    VISION_BLOCK_ROLES, VISION_DEEPSTACK_MERGER_PREFIX, VISION_DEEPSTACK_MERGER_SUFFIXES,
-    VISION_INSTALL_PREFIX, VISION_PREFIX, VISION_QWEN25_BLOCK_ROLES,
-    VISION_QWEN25_RESIDENT_TENSORS, VISION_QWEN2_VL_BLOCK_ROLES, VISION_QWEN2_VL_RESIDENT_TENSORS,
-    VISION_RESIDENT_TENSORS, VISION_SOURCE_PREFIXES,
+    INTERNVL_PROJECTOR_PREFIX, INTERNVL_TOWER_PREFIX, LLAVA_MODEL_TYPE, LLAVA_NEXT_MODEL_TYPE,
+    MAGE_VL_MODEL_TYPE, MINICPM_BLOCK_ROLES, MINICPM_MERGER, MINICPM_MERGER_PREFIX,
+    MINICPM_SOURCE_PREFIXES, MINICPM_TOWER_RESIDENT, MINICPM_VIT_MERGER, MINICPM_VIT_MERGER_PREFIX,
+    MTP_PREFIX, MUSE_BLOCK_SOURCES, MUSE_RESIDENT_TENSORS, MUSE_SOURCE_PREFIXES, OCR_SAM_PREFIX,
+    OCR_SOURCE_PREFIXES, ONEVISION_MODEL_TYPE, ONEVISION_NEWLINE, ONEVISION_RESIDENT_TENSORS,
+    ONEVISION_SOURCE_PREFIXES, PIXTRAL_BLOCK_ROLES, PIXTRAL_MODEL_TYPE, PIXTRAL_PROJECTOR_PREFIX,
+    PIXTRAL_RESIDENT_TENSORS, PIXTRAL_SOURCE_PREFIXES, PIXTRAL_TOWER_PREFIX, SIGLIP_MODEL_PREFIX,
+    SIGLIP_PROJECTOR_PREFIX, SIGLIP_RESIDENT_TENSORS, SIGLIP_SOURCE_PREFIXES, SMOLVLM_MODEL_TYPE,
+    UNLIMITED_OCR_MODEL_TYPE, VISION_BLOCK_ROLES, VISION_DEEPSTACK_MERGER_PREFIX,
+    VISION_DEEPSTACK_MERGER_SUFFIXES, VISION_INSTALL_PREFIX, VISION_PREFIX,
+    VISION_QWEN25_BLOCK_ROLES, VISION_QWEN25_RESIDENT_TENSORS, VISION_QWEN2_VL_BLOCK_ROLES,
+    VISION_QWEN2_VL_RESIDENT_TENSORS, VISION_RESIDENT_TENSORS, VISION_SOURCE_PREFIXES,
 };
 pub use gguf_checkpoint::{
     dtype_tag_for_ggml_type, gdn_out_proj_needs_q8_0_requant, gemma3_tensor_is_transcoded,
@@ -220,6 +226,9 @@ pub use synthetic_flint::{
     build_synthetic_flint_install, build_synthetic_flint_install_with, tiny_flint_arch,
     SyntheticFlintRouted,
 };
+pub use synthetic_gemma4_unified::{
+    build_synthetic_gemma4_unified_install, synthetic_gemma4_unified_checkpoint,
+};
 pub use synthetic_gguf::{
     build_synthetic_gemma4_gguf, build_synthetic_gpt_oss_gguf, build_synthetic_qwen2_gguf,
     build_synthetic_qwen35_dense_gguf, GgufBuilder, GgufFileAndRanges, QuantMix,
@@ -232,10 +241,20 @@ pub use synthetic_lfm3::{
 };
 pub use synthetic_llama::{
     build_synthetic_dense_llama_install, build_synthetic_gqa_moe_install,
-    build_synthetic_idefics3_install, build_synthetic_llama_real_install,
-    build_synthetic_qwen2_install, build_synthetic_qwen2_install_with_bias,
-    build_synthetic_qwen3_vl_install, tiny_dense_llama_arch, tiny_gqa_moe_arch, tiny_llama_arch,
-    tiny_qwen3_vl_arch, SyntheticTowerTensor,
+    build_synthetic_idefics3_install, build_synthetic_internvl_install,
+    build_synthetic_llama_real_install, build_synthetic_qwen2_install,
+    build_synthetic_qwen2_install_with_bias, build_synthetic_qwen3_vl_install,
+    tiny_dense_llama_arch, tiny_gqa_moe_arch, tiny_llama_arch, tiny_qwen3_vl_arch,
+    SyntheticTowerTensor,
+};
+pub use synthetic_llava_next::{
+    build_synthetic_llava_15_sidecar, build_synthetic_llava_next_sidecar,
+    synthetic_llava_next_checkpoint, SyntheticLlavaNext, SYNTHETIC_NEXT_HEADS,
+    SYNTHETIC_NEXT_HIDDEN, SYNTHETIC_NEXT_IMAGE_ID,
+};
+pub use synthetic_mage::{
+    build_synthetic_mage_vl_install, synthetic_mage_vl_checkpoint, SyntheticMageVl,
+    SYNTHETIC_MAGE_DEPTH, SYNTHETIC_MAGE_HEADS, SYNTHETIC_MAGE_HIDDEN, SYNTHETIC_MAGE_TEXT_HIDDEN,
 };
 pub use synthetic_model::{
     build_synthetic_gemma4_install, build_synthetic_gemma4_moe_install,

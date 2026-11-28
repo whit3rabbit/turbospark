@@ -88,7 +88,7 @@ fn load_inner(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::collections::BTreeMap;
     use std::io::{BufRead, BufReader, Write};
@@ -100,9 +100,9 @@ mod tests {
 
     const REVISION: &str = "0123456789abcdef0123456789abcdef01234567";
     const SHARD_BYTES: usize = 1 << 20;
-    static ENDPOINT_LOCK: Mutex<()> = Mutex::new(());
+    pub(crate) static ENDPOINT_LOCK: Mutex<()> = Mutex::new(());
 
-    struct FixtureServer {
+    pub(crate) struct FixtureServer {
         endpoint: String,
         requests: Arc<Mutex<Vec<String>>>,
         stop: Arc<AtomicBool>,
@@ -124,7 +124,7 @@ mod tests {
         }
     }
 
-    struct EndpointReset;
+    pub(crate) struct EndpointReset;
 
     impl Drop for EndpointReset {
         fn drop(&mut self) {
@@ -132,7 +132,7 @@ mod tests {
         }
     }
 
-    fn fixture_server(files: BTreeMap<String, Vec<u8>>) -> FixtureServer {
+    pub(crate) fn fixture_server(files: BTreeMap<String, Vec<u8>>) -> FixtureServer {
         let listener = TcpListener::bind("127.0.0.1:0").expect("fixture bind");
         listener
             .set_nonblocking(true)
@@ -204,6 +204,18 @@ mod tests {
         range: Option<&str>,
         files: &BTreeMap<String, Vec<u8>>,
     ) -> Vec<u8> {
+        // The revision's file list, for walks that resolve shard names.
+        if path == format!("/api/models/owner/model/revision/{REVISION}") {
+            let siblings: Vec<_> = files
+                .keys()
+                .map(|name| serde_json::json!({"rfilename": name}))
+                .collect();
+            let body = serde_json::json!({
+                "id": "owner/model", "sha": REVISION, "siblings": siblings
+            })
+            .to_string();
+            return response(200, "OK", body.as_bytes(), &[]);
+        }
         let Some(name) = path.strip_prefix(&format!("/owner/model/resolve/{REVISION}/")) else {
             return response(404, "Not Found", b"not found", &[]);
         };
@@ -269,7 +281,7 @@ mod tests {
         bytes
     }
 
-    fn set_endpoint(server: &FixtureServer) -> (EndpointReset, Client) {
+    pub(crate) fn set_endpoint(server: &FixtureServer) -> (EndpointReset, Client) {
         crate::set_hf_endpoint_override(Some(server.endpoint.clone()));
         (EndpointReset, Client::with_timeout(Duration::from_secs(3)))
     }

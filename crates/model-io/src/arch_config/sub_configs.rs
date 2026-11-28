@@ -475,9 +475,46 @@ pub enum VisionTowerKind {
     /// 0.5/0.5 normalization pair are properties of the kind, checked at
     /// intake rather than stored, which keeps this struct float-free.
     SigLipNaViT,
+    /// `gemma4_unified`'s encoder-free embedder: LayerNorm, linear,
+    /// LayerNorm, a 2-D position table and LayerNorm over 48 px model
+    /// patches, then the no-scale RMSNorm and `embed_vision` projector
+    /// (`docs/GEMMA4_UNIFIED_VISION_PHASE0.md`). `depth` is 1 (one embedder
+    /// stage in one blob, no encoder), `hidden_size` is `mm_embed_dim`,
+    /// `spatial_merge_size` the pooling kernel, `num_position_embeddings`
+    /// is `mm_posemb_size`, and `intermediate_size` and `num_heads` are 0.
+    /// The trunk side (span prefill, image-id expansion) is Gemma 4's.
+    Gemma4Unified,
+    /// LLaVA-NeXT (LLaVA 1.6, `docs/LLAVA_NEXT_VISION_PHASE0.md`): the same
+    /// CLIP weights and projector as [`VisionTowerKind::Clip`] plus a learned
+    /// `image_newline`, run once per anyres tile (a squashed base and a 336 px
+    /// grid) and packed into one run. A kind of its own so a 1.6 tower can
+    /// never be driven as 1.5: both have patch 14 and 577 position rows, so
+    /// nothing else in the config tells them apart.
+    ///
+    /// Field meanings are [`VisionTowerKind::Clip`]'s.
+    ClipNext,
+    /// Mage-ViT, the `mage_vl` tower, still images only
+    /// (`docs/MAGE_VL_VISION_PHASE0.md`): the Qwen2-VL block layout with a
+    /// LayerNorm before block 0, exact GELU everywhere, a 4:6:6 `(t, h, w)`
+    /// rope with an interleaved rotation, one frame per patch, and a trunk
+    /// that is plain `qwen3` with 1-D positions (no mRoPE).
+    ///
+    /// `hidden_size` is the tower width, `out_hidden_size` the trunk width,
+    /// `num_position_embeddings` is zero. The 1e-6 epsilon and the 10,000
+    /// rope base are properties of the kind, checked at intake.
+    MageVit,
 }
 
 impl VisionTowerKind {
+    /// Whether the trunk takes this tower's rows through Gemma 4's image
+    /// span prefill and `boi` / `eoi` prompt layout.
+    pub fn is_gemma4_trunk(self) -> bool {
+        matches!(
+            self,
+            VisionTowerKind::Gemma4 | VisionTowerKind::Gemma4Unified
+        )
+    }
+
     /// Whether the tower is the MiniCPM-V one (both wrapper generations run
     /// the same weights layout, preprocessing and Metal path).
     pub fn is_minicpm_v(self) -> bool {
@@ -492,10 +529,12 @@ impl VisionTowerKind {
         match self {
             VisionTowerKind::QwenSiglip => "qwen_siglip",
             VisionTowerKind::Gemma4 => "gemma4",
+            VisionTowerKind::Gemma4Unified => "gemma4_unified",
             VisionTowerKind::Qwen25Vl => "qwen25_vl",
             VisionTowerKind::Qwen2Vl => "qwen2_vl",
             VisionTowerKind::Lfm3Vl => "lfm3_vl",
             VisionTowerKind::Clip => "clip",
+            VisionTowerKind::ClipNext => "clip_next",
             VisionTowerKind::MuseGlimmer => "muse_glimmer",
             VisionTowerKind::MiniCpmV => "minicpm_v",
             VisionTowerKind::MiniCpmV46 => "minicpm_v46",
@@ -506,6 +545,7 @@ impl VisionTowerKind {
             VisionTowerKind::Inkling2 => "inkling2",
             VisionTowerKind::InternViT => "internvit",
             VisionTowerKind::SigLipNaViT => "siglip_navit",
+            VisionTowerKind::MageVit => "mage_vit",
         }
     }
 
@@ -515,10 +555,12 @@ impl VisionTowerKind {
         match s {
             "qwen_siglip" => Some(VisionTowerKind::QwenSiglip),
             "gemma4" => Some(VisionTowerKind::Gemma4),
+            "gemma4_unified" => Some(VisionTowerKind::Gemma4Unified),
             "qwen25_vl" => Some(VisionTowerKind::Qwen25Vl),
             "qwen2_vl" => Some(VisionTowerKind::Qwen2Vl),
             "lfm3_vl" => Some(VisionTowerKind::Lfm3Vl),
             "clip" => Some(VisionTowerKind::Clip),
+            "clip_next" => Some(VisionTowerKind::ClipNext),
             "muse_glimmer" => Some(VisionTowerKind::MuseGlimmer),
             "minicpm_v" => Some(VisionTowerKind::MiniCpmV),
             "minicpm_v46" => Some(VisionTowerKind::MiniCpmV46),
@@ -529,6 +571,7 @@ impl VisionTowerKind {
             "inkling2" => Some(VisionTowerKind::Inkling2),
             "internvit" => Some(VisionTowerKind::InternViT),
             "siglip_navit" => Some(VisionTowerKind::SigLipNaViT),
+            "mage_vit" => Some(VisionTowerKind::MageVit),
             _ => None,
         }
     }

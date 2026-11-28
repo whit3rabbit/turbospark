@@ -790,6 +790,19 @@ pub(crate) fn plan(model: &AppState, request: &ChatCompletionRequest) -> Result<
             let images = crate::vision::inkling2_preprocess_all(&encoded, *max_tokens)?;
             Some(crate::vision::RequestImages::Inkling2 { images, spans })
         }
+        // InternVL: the run length is per image, set by the tile grid the
+        // image's size picks, so the preflight reads headers first. The
+        // template rendered `<img>` text for each part (`set_image_part_marker`).
+        (Some(crate::vision::VisionInfo::InternVl { layout }), false) => {
+            let counts = crate::vision::internvl_preflight_all(&encoded, layout)?;
+            let (expanded, spans) = layout
+                .expand(&prompt_ids, &counts)
+                .map_err(|e| format!("cannot place {} image(s): {e}", counts.len()))?;
+            prompt_ids = expanded;
+            check_context(&prompt_ids, &config, model.max_context())?;
+            let images = crate::vision::internvl_preprocess_all(&encoded, layout)?;
+            Some(crate::vision::RequestImages::InternVl { images, spans })
+        }
         // DeepSeek-OCR: every image is one padded base view and a 273-position
         // run, so the counts need only the headers.
         (

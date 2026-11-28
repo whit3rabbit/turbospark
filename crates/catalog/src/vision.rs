@@ -40,19 +40,41 @@ enum SidecarMatch {
     Ambiguous(Vec<PathBuf>),
 }
 
-fn match_installed_sidecar(store: &Store, family: ModelFamily, hidden_size: i64) -> SidecarMatch {
+/// `auto` skips LLaVA 1.6 towers: the record pairs by family and width only,
+/// and a 4096-wide `llama` pair also matches a Mistral 7B or a LLaVA-1.5 trunk,
+/// which that tower was not trained against. Naming the directory attaches it.
+/// Skipping rather than counting them also keeps what `auto` does for an
+/// installed 1.5 tower unchanged when a 1.6 one is added beside it.
+fn match_installed_sidecar(
+    store: &Store,
+    family: ModelFamily,
+    hidden_size: i64,
+    auto: bool,
+) -> SidecarMatch {
     let wanted = family.as_str();
     let mut matches: Vec<PathBuf> = Vec::new();
+    let mut explicit_only: Vec<String> = Vec::new();
     for row in store.installed().values() {
         if row.kind.as_deref() != Some("vision-tower") {
             continue;
         }
-        let Ok((record, _vision)) = model_io::load_vision_sidecar(&row.path) else {
+        let Ok((record, vision)) = model_io::load_vision_sidecar(&row.path) else {
             continue;
         };
         if record.pairs_with.family == wanted && record.pairs_with.hidden_size == hidden_size {
-            matches.push(row.path.clone());
+            if auto && vision.tower == model_io::VisionTowerKind::ClipNext {
+                explicit_only.push(row.path.display().to_string());
+            } else {
+                matches.push(row.path.clone());
+            }
         }
+    }
+    if matches.is_empty() && !explicit_only.is_empty() {
+        return SidecarMatch::Zero(format!(
+            "a LLaVA 1.6 tower is never attached automatically, because it pairs by width \
+             only. For its own trunk, pass the directory as the vision sidecar: {}",
+            explicit_only.join(", ")
+        ));
     }
     match matches.len() {
         0 => SidecarMatch::Zero(format!(
@@ -85,7 +107,7 @@ pub fn resolve_vision_sidecar(
     family: ModelFamily,
     hidden_size: i64,
 ) -> Result<PathBuf, String> {
-    match match_installed_sidecar(store, family, hidden_size) {
+    match match_installed_sidecar(store, family, hidden_size, false) {
         SidecarMatch::One(dir) => Ok(dir),
         SidecarMatch::Zero(reason) => Err(reason),
         SidecarMatch::Ambiguous(dirs) => Err(ambiguous_message(family, hidden_size, &dirs)),
@@ -129,7 +151,7 @@ pub fn resolve_vision_sidecar_auto(
                 .to_string(),
         ));
     }
-    match match_installed_sidecar(store, family, hidden_size) {
+    match match_installed_sidecar(store, family, hidden_size, true) {
         SidecarMatch::One(dir) => Ok(AutoVisionSidecar::Attached(dir)),
         SidecarMatch::Zero(reason) => Ok(AutoVisionSidecar::TextOnly(reason)),
         SidecarMatch::Ambiguous(dirs) => Err(ambiguous_message(family, hidden_size, &dirs)),

@@ -326,7 +326,7 @@ pub(crate) fn open_with_failure(
     let trunk_family = arch.family;
     let trunk_hidden_size = arch.hidden_size;
 
-    let tokenizer = MfTokenizer::load_from_dir(dir)
+    let mut tokenizer = MfTokenizer::load_from_dir(dir)
         .map_err(|e| format!("failed to load a tokenizer from {}: {e}", dir.display()))?;
 
     let trained = repack::trained_context_meta::peek(dir);
@@ -443,6 +443,9 @@ pub(crate) fn open_with_failure(
     // into a faster one.
     let prefix_reuse = options.prefix_reuse.unwrap_or(true);
     runner.set_prefix_reuse(prefix_reuse);
+    if let Some(marker) = runner.image_part_marker() {
+        tokenizer.set_image_part_marker(marker);
+    }
     let temporary_limit = load_policy
         .guard
         .budget()
@@ -523,6 +526,10 @@ pub(crate) fn open_with_failure(
         }
         None => None,
     };
+    // After the sidecar attach above: LLaVA 1.6's tower arrives that way.
+    if runner.is_llava_next_vision() {
+        tokenizer.set_string_content_as_parts();
+    }
 
     // **RESOLVED AS THOUGH EVERY TURN WERE DETERMINISTIC, which is the one
     // place this binding follows the SERVER rather than the CLI.** On the
@@ -624,6 +631,7 @@ pub(crate) fn open_with_failure(
         },
         vision: vision_info(
             &runner,
+            &tokenizer,
             vision_sidecar_dir.as_deref(),
             load_policy.guard,
             committed.total(),
@@ -695,6 +703,7 @@ pub(crate) fn open_with_failure(
 /// "install" from "sidecar" at OPEN time, which is when this struct is built.
 fn vision_info(
     runner: &runtime::RealForwardRunner,
+    tokenizer: &MfTokenizer,
     sidecar_dir: Option<&Path>,
     guard: model_io::LoadGuard,
     committed: u64,
@@ -746,7 +755,7 @@ fn vision_info(
                 reason: None,
                 source,
                 sidecar_path,
-                max_pixels: Some(params.size * params.size),
+                max_pixels: Some(params.max_source_pixels()),
             },
             Err(reason) => crate::wire::VisionInfo {
                 active: false,
@@ -851,6 +860,30 @@ fn vision_info(
                 source,
                 sidecar_path,
                 max_pixels: Some(params.longest_edge * params.longest_edge),
+            },
+            Err(reason) => crate::wire::VisionInfo {
+                active: false,
+                image_token_id: None,
+                reason: Some(reason),
+                source,
+                sidecar_path,
+                max_pixels: None,
+            },
+        };
+    }
+    // InternVL tiles every image into its own fixed squares, so there is no
+    // pixel budget to clamp: the ceiling is the largest tile grid's area.
+    if runner.internvl_image_ids().is_some() {
+        return match crate::vision::internvl_layout(runner, tokenizer) {
+            Ok(layout) => crate::wire::VisionInfo {
+                active: true,
+                image_token_id: Some(image_token_id),
+                reason: None,
+                source,
+                sidecar_path,
+                max_pixels: Some(
+                    layout.params.max_dynamic * layout.params.tile * layout.params.tile,
+                ),
             },
             Err(reason) => crate::wire::VisionInfo {
                 active: false,

@@ -405,6 +405,7 @@ impl RealForwardRunner {
             install_dir: dir.to_path_buf(),
             vision: None,
             gemma4_vision: None,
+            gemma4_unified_vision: None,
             qwen25_vision: None,
             qwen2_vision: None,
             minicpm_vision: None,
@@ -856,7 +857,7 @@ impl RealForwardRunner {
 /// `set_prompt_vision_gemma4` rather than wrapping the ring. A text-only
 /// install keeps the old ring byte for byte.
 fn kv_ring_chunk_tokens(arch: &model_io::ArchConfig) -> usize {
-    if arch.vision.is_active() && arch.vision.tower == model_io::VisionTowerKind::Gemma4 {
+    if arch.vision.is_active() && arch.vision.tower.is_gemma4_trunk() {
         MAX_PREFILL_CHUNK_TOKENS.max(turbospark_vision_io::GEMMA4_DEFAULT_SOFT_TOKENS)
     } else {
         MAX_PREFILL_CHUNK_TOKENS

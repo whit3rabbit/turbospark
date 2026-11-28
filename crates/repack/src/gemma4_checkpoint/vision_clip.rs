@@ -1,5 +1,6 @@
 //! The CLIP vision tower's config and ingest (LLaVA-1.5,
-//! `docs/LLAVA_VISION_PHASE0.md`).
+//! `docs/LLAVA_VISION_PHASE0.md`, and LLaVA 1.6,
+//! `docs/LLAVA_NEXT_VISION_PHASE0.md`).
 //!
 //! A sibling of [`super::vision`] and [`super::vision_gemma4`]. What it shares
 //! with the qwen tower is the destination: blocks pack into `packed_vision/`
@@ -31,6 +32,21 @@ use crate::resident_writer::{RawTensorSpec, ResidentEntrySpec};
 
 /// The HF `model_type` of a LLaVA-1.5 checkpoint.
 pub const LLAVA_MODEL_TYPE: &str = "llava";
+
+/// The HF `model_type` of a LLaVA 1.6 (NeXT) checkpoint.
+pub const LLAVA_NEXT_MODEL_TYPE: &str = "llava_next";
+
+/// LLaVA 1.6's learned end-of-row embedding, a bare top-level name. Read for
+/// [`VisionTowerKind::ClipNext`] only: on a 1.5 walk it stays an unknown name.
+pub const CLIP_NEXT_NEWLINE: &str = "image_newline";
+
+/// The source prefixes a LLaVA 1.6 tower fetch needs.
+pub const CLIP_NEXT_SOURCE_PREFIXES: [&str; 3] =
+    [CLIP_MODEL_PREFIX, CLIP_PROJECTOR_PREFIX, CLIP_NEXT_NEWLINE];
+
+/// The 1.6 newline's install name under [`VISION_INSTALL_PREFIX`], written
+/// after [`CLIP_RESIDENT_TENSORS`].
+pub const CLIP_NEXT_NEWLINE_RESIDENT: &str = "image_newline";
 
 /// The CLIP tower's prefix in a LLaVA checkpoint.
 pub const CLIP_MODEL_PREFIX: &str = "vision_tower.vision_model.";
@@ -101,6 +117,10 @@ pub const CLIP_RESIDENT_TENSORS: [&str; 9] = [
 /// Patch edge this port's preprocessing implements.
 const SUPPORTED_PATCH: i64 = 14;
 
+/// The only LLaVA 1.6 tile edge: the preprocessing and the packing are built
+/// on 24 x 24 patches per tile.
+const NEXT_IMAGE_SIZE: i64 = 336;
+
 /// Parse a LLaVA `config.json` into the tower's [`VisionConfig`].
 ///
 /// Everything the runtime does not store is checked here and refused when it
@@ -119,6 +139,65 @@ pub fn parse_llava_vision_config(json: &str) -> Result<VisionConfig, Gemma4Error
             "model_type is not {LLAVA_MODEL_TYPE:?}; this reader is for LLaVA-1.5"
         )));
     }
+    parse_clip_tower(&root, VisionTowerKind::Clip)
+}
+
+/// Parse a LLaVA 1.6 (`llava_next`) `config.json`.
+///
+/// The tower checks are [`parse_llava_vision_config`]'s. On top of them: a
+/// Llama or Mistral text model (the only trunks the sidecar pairs with; the
+/// Qwen-trunk LLaVA-NeXT builds are refused by name), a 336 px tile, and the
+/// learned image newline, which the packing always appends.
+pub fn parse_llava_next_vision_config(json: &str) -> Result<VisionConfig, Gemma4Error> {
+    let root: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| Gemma4Error::Config(e.to_string()))?;
+    let bad = |m: String| Gemma4Error::Config(m);
+    if root.get("model_type").and_then(serde_json::Value::as_str) != Some(LLAVA_NEXT_MODEL_TYPE) {
+        return Err(bad(format!(
+            "model_type is not {LLAVA_NEXT_MODEL_TYPE:?}; this reader is for LLaVA 1.6"
+        )));
+    }
+    if let Some(text) = root
+        .get("text_config")
+        .and_then(|t| t.get("model_type"))
+        .and_then(serde_json::Value::as_str)
+    {
+        if !matches!(text, "llama" | "mistral") {
+            return Err(bad(format!(
+                "llava_next with a {text:?} text model is not supported; only llama and \
+                 mistral trunks run under the llama family"
+            )));
+        }
+    }
+    if root
+        .get("use_image_newline_parameter")
+        .and_then(serde_json::Value::as_bool)
+        == Some(false)
+    {
+        return Err(bad(
+            "use_image_newline_parameter is false; the implemented packing appends it".to_string(),
+        ));
+    }
+    let vision = parse_clip_tower(&root, VisionTowerKind::ClipNext)?;
+    if vision.is_active() {
+        let image =
+            vision.patch_size * ((vision.num_position_embeddings - 1) as f64).sqrt().round() as i64;
+        if image != NEXT_IMAGE_SIZE {
+            return Err(bad(format!(
+                "vision image_size {image}; the implemented LLaVA 1.6 tile is {NEXT_IMAGE_SIZE}"
+            )));
+        }
+    }
+    Ok(vision)
+}
+
+/// What LLaVA-1.5 and 1.6 share: the CLIP vision config, the feature layer,
+/// the select strategy and the projector.
+fn parse_clip_tower(
+    root: &serde_json::Value,
+    tower: VisionTowerKind,
+) -> Result<VisionConfig, Gemma4Error> {
+    let bad = |m: String| Gemma4Error::Config(m);
     let vc = match root.get("vision_config") {
         None | Some(serde_json::Value::Null) => return Ok(VisionConfig::NONE),
         Some(v) => v,
@@ -228,7 +307,7 @@ pub fn parse_llava_vision_config(json: &str) -> Result<VisionConfig, Gemma4Error
         vision_end_token_id: 0,
         image_token_id: image_token,
         video_token_id: 0,
-        tower: VisionTowerKind::Clip,
+        tower,
     })
 }
 
@@ -268,7 +347,8 @@ pub fn read_clip_vision_entries(
     vision_bases: &[&str],
     vision: &VisionConfig,
 ) -> Result<VisionRead, Gemma4Error> {
-    if vision.tower != VisionTowerKind::Clip || vision.depth < 1 {
+    let next = vision.tower == VisionTowerKind::ClipNext;
+    if !(next || vision.tower == VisionTowerKind::Clip) || vision.depth < 1 {
         return Err(Gemma4Error::Config(format!(
             "not a CLIP tower (kind {:?}, depth {})",
             vision.tower, vision.depth
@@ -285,8 +365,15 @@ pub fn read_clip_vision_entries(
     let mut embed: [Option<&str>; 4] = [None; 4];
     let mut pre_bias: Option<&str> = None;
     let mut projector: [Option<&str>; 4] = [None; 4];
+    let mut newline: Option<&str> = None;
 
     for &name in vision_bases {
+        if next && name == CLIP_NEXT_NEWLINE {
+            if newline.replace(name).is_some() {
+                return Err(Gemma4Error::UnknownTensor(format!("{name}: duplicate")));
+            }
+            continue;
+        }
         if let Some(tail) = name.strip_prefix(CLIP_PROJECTOR_PREFIX) {
             let slot = PROJECTOR_TENSORS
                 .iter()
@@ -379,6 +466,10 @@ pub fn read_clip_vision_entries(
                 PROJECTOR_TENSORS[slot]
             )));
         }
+    }
+
+    if next && newline.is_none() {
+        return Err(Gemma4Error::MissingTensor(CLIP_NEXT_NEWLINE.to_string()));
     }
 
     let mut lossy_conversion = Vec::new();
@@ -481,6 +572,15 @@ pub fn read_clip_vision_entries(
         load(p(3), &[out_hidden])?.0,
         shape4(&[out_hidden as u64]),
     );
+    // The last `push_resident` use is above: it holds `entries` mutably.
+    if let Some(name) = newline {
+        entries.push(ResidentEntrySpec::Raw(RawTensorSpec {
+            name: format!("{VISION_INSTALL_PREFIX}{CLIP_NEXT_NEWLINE_RESIDENT}"),
+            dtype: crate::DTYPE_FP16,
+            bytes: load(name, &[out_hidden])?.0,
+            shape: shape4(&[out_hidden as u64]),
+        }));
+    }
 
     let mut experts = Vec::with_capacity(depth);
     let mut widest = 0u64;
@@ -743,6 +843,74 @@ mod tests {
         // Through the shared entry point, so the tower-kind dispatch is what
         // is tested.
         super::super::vision::read_vision_entries(&shards, &bases, &tiny_vision())
+    }
+
+    /// The tiny checkpoint, plus `image_newline` when `newline`, read as
+    /// `tower`.
+    fn read_as(tower: VisionTowerKind, newline: bool) -> Result<VisionRead, Gemma4Error> {
+        use crate::ranged_download::MemoryRangeSource;
+        use crate::safetensors_header::{parse_header, DEFAULT_MAX_HEADER_BYTES};
+        // `extra` is shaped `[HID]`, so the projector width is HID here.
+        let extra = newline.then_some(CLIP_NEXT_NEWLINE);
+        let (names, blob) = tiny_checkpoint(None, extra, false);
+        let header = parse_header(&blob, DEFAULT_MAX_HEADER_BYTES).unwrap();
+        let source = MemoryRangeSource::new(&blob);
+        let shards = Gemma4Shards::single(&header, &source);
+        let bases: Vec<&str> = names.iter().map(String::as_str).collect();
+        let mut v = tiny_vision();
+        v.tower = tower;
+        super::super::vision::read_vision_entries(&shards, &bases, &v)
+    }
+
+    #[test]
+    fn the_llava_next_walk_needs_the_newline_and_the_1_5_walk_refuses_it() {
+        // 1.5 must not start swallowing the 1.6 tensor.
+        let err = read_as(VisionTowerKind::Clip, true).err().expect("refused");
+        assert!(err.to_string().contains("image_newline"), "{err}");
+        let err = read_as(VisionTowerKind::ClipNext, false)
+            .err()
+            .expect("missing");
+        assert!(
+            matches!(&err, Gemma4Error::MissingTensor(n) if n == CLIP_NEXT_NEWLINE),
+            "{err}"
+        );
+        // The fixture's newline is HID wide against a TEXT-wide trunk, which
+        // the shape check must catch by name.
+        let err = read_as(VisionTowerKind::ClipNext, true)
+            .err()
+            .expect("width");
+        assert!(
+            err.to_string().contains("image_newline") && err.to_string().contains("shape"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn the_llava_next_config_parses_to_its_own_kind_and_each_parser_refuses_the_other() {
+        let mut next = real_config();
+        next["model_type"] = serde_json::json!("llava_next");
+        next["use_image_newline_parameter"] = serde_json::json!(true);
+        let v = parse_llava_next_vision_config(&next.to_string()).unwrap();
+        assert_eq!(v.tower, VisionTowerKind::ClipNext);
+        assert_eq!((v.depth, v.num_position_embeddings), (23, 577));
+        assert!(parse_llava_vision_config(&next.to_string()).is_err());
+        assert!(parse_llava_next_vision_config(&real_config().to_string()).is_err());
+
+        for (key, value) in [
+            ("use_image_newline_parameter", serde_json::json!(false)),
+            ("text_config", serde_json::json!({"model_type": "qwen2"})),
+            ("projector_hidden_act", serde_json::json!("quick_gelu")),
+        ] {
+            let mut c = next.clone();
+            c[key] = value;
+            assert!(
+                parse_llava_next_vision_config(&c.to_string()).is_err(),
+                "{key} must be refused"
+            );
+        }
+        let mut c = next.clone();
+        c["vision_config"]["image_size"] = serde_json::json!(224);
+        assert!(parse_llava_next_vision_config(&c.to_string()).is_err());
     }
 
     #[test]

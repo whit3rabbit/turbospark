@@ -339,6 +339,22 @@ pub fn canonicalize_deepseek_vl2_header(
     Ok(())
 }
 
+/// Removes `gemma4_unified`'s audio projector from a shard header and returns
+/// the names, so the caller can report what the install will not carry. Audio
+/// is not ported.
+///
+/// The CALLER gates this on `config.json`'s root `model_type`: the E2B/E4B
+/// Gemma 4 checkpoints spell their projector the same way, and the walk must
+/// keep refusing it there. Only the three known names are removed, so a new
+/// audio tensor still reaches `Unknown`.
+pub fn drop_gemma4_unified_audio(header: &mut SafetensorsHeader) -> Vec<String> {
+    ["weight", "scales", "biases"]
+        .iter()
+        .map(|part| format!("embed_audio.embedding_projection.{part}"))
+        .filter(|name| header.tensors.remove(name).is_some())
+        .collect()
+}
+
 /// Renames Flint's text-only MLX namespace onto the canonical install
 /// namespace (the `qwen2` rename, reused) and re-labels its U8-packed
 /// quantized weights as the U32-packed form the walk reads.
@@ -753,6 +769,13 @@ pub fn classify_for_family(name: &str, num_layers: usize, family: ModelFamily) -
         return Gemma4Bucket::VisionTower;
     }
     if name.starts_with(super::vision_gemma4::EMBED_VISION_PREFIX) && family == ModelFamily::Gemma4
+    {
+        return Gemma4Bucket::VisionTower;
+    }
+    // `gemma4_unified`'s encoder-free embedder, beside `embed_vision.` above.
+    // Gemma 4 only; ingested or dropped by name like the rest of the tower.
+    if name.starts_with(super::vision_gemma4_unified::GEMMA4_UNIFIED_EMBEDDER_PREFIX)
+        && family == ModelFamily::Gemma4
     {
         return Gemma4Bucket::VisionTower;
     }

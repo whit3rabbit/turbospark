@@ -137,10 +137,13 @@ fn vision_tower_defaults_to_qwen_and_reads_gemma4() {
     for k in [
         VisionTowerKind::QwenSiglip,
         VisionTowerKind::Gemma4,
+        VisionTowerKind::Gemma4Unified,
         VisionTowerKind::Clip,
     ] {
         assert_eq!(VisionTowerKind::parse(k.as_str()), Some(k));
     }
+    // The spelling is persisted in manifests.
+    assert_eq!(VisionTowerKind::Gemma4Unified.as_str(), "gemma4_unified");
 }
 
 /// The CLIP tower (LLaVA) persists as `clip` and reads back as itself; the
@@ -153,6 +156,17 @@ fn the_clip_tower_kind_persists_as_clip() {
     let arch: turbospark_model_io::ManifestArch =
         serde_json::from_str(&manifest_arch_json(r#", "visionTower": "clip""#)).unwrap();
     assert_eq!(arch.vision_config().tower, VisionTowerKind::Clip);
+}
+
+/// LLaVA 1.6 persists as its own kind: read back as `clip` it would run
+/// without tiles, and nothing else in the config separates the two.
+#[test]
+fn the_llava_next_tower_kind_persists_apart_from_clip() {
+    use turbospark_model_io::VisionTowerKind;
+    assert_eq!(VisionTowerKind::ClipNext.as_str(), "clip_next");
+    let arch: turbospark_model_io::ManifestArch =
+        serde_json::from_str(&manifest_arch_json(r#", "visionTower": "clip_next""#)).unwrap();
+    assert_eq!(arch.vision_config().tower, VisionTowerKind::ClipNext);
 }
 
 fn tempfile_dir() -> std::path::PathBuf {

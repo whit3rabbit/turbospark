@@ -196,7 +196,7 @@ fn template_requires_content_parts(source: &str) -> bool {
 
 fn message_to_json(
     message: &Message,
-    flatten_image_parts: bool,
+    flatten_image_parts: Option<&str>,
     wrap_text_content: bool,
 ) -> JsonValue {
     let mut obj = serde_json::Map::new();
@@ -222,7 +222,7 @@ fn message_to_json(
         );
     } else if message.content_parts.is_empty() {
         obj.insert("content".to_string(), json!(message.content));
-    } else if flatten_image_parts {
+    } else if let Some(marker) = flatten_image_parts {
         // The exception to the paragraph above: this template has no part arm,
         // and this tokenizer has `<image>` as a real added token, so here the
         // markup does tokenize to the special token.
@@ -231,7 +231,7 @@ fn message_to_json(
             .iter()
             .map(|part| match part {
                 crate::chat_template::ContentPart::Text(text) => text.as_str(),
-                crate::chat_template::ContentPart::Image => IMAGE_MARKER,
+                crate::chat_template::ContentPart::Image => marker,
             })
             .collect();
         obj.insert("content".to_string(), json!(text));
@@ -343,9 +343,12 @@ pub fn render_generic_chat_template(
     env.add_template("chat", source)
         .map_err(|e| TokenizerError::InvalidChatTemplate(e.to_string()))?;
 
-    let flatten_image_parts =
-        template_prints_content_raw(source) && tokenizer.token_to_id(IMAGE_MARKER).is_some();
-    let wrap_text_content = template_requires_content_parts(source);
+    let flatten_image_parts = tokenizer.image_part_marker.or_else(|| {
+        (template_prints_content_raw(source) && tokenizer.token_to_id(IMAGE_MARKER).is_some())
+            .then_some(IMAGE_MARKER)
+    });
+    let wrap_text_content =
+        tokenizer.string_content_as_parts || template_requires_content_parts(source);
     let mut context = serde_json::Map::new();
     context.insert(
         "messages".to_string(),

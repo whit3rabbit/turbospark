@@ -195,6 +195,46 @@ pub fn encode_vision_rope_2d(
     Ok(())
 }
 
+/// Mage-ViT's rotary embedding in place on a `[seq, heads, head_dim]` FP16
+/// buffer: adjacent lanes pair, and lane `l` takes `freqs[l % (head_dim / 2)]`
+/// (`turbospark_vision_io::rope::mage_vit_rope_rows`). `freqs` is `[seq,
+/// head_dim / 2]` F32.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_vision_rope_interleaved(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    qk: (&metal::Buffer, u64),
+    freqs: (&metal::Buffer, u64),
+    seq: u32,
+    heads: u32,
+    head_dim: u32,
+) -> Result<(), GpuError> {
+    if head_dim == 0 || head_dim % 2 != 0 {
+        return Err(GpuError::PipelineCreate(format!(
+            "interleaved vision rope head_dim {head_dim} must be a nonzero even number"
+        )));
+    }
+    let pipeline = context.pipeline(
+        SOURCE,
+        "vision_rope_interleaved_fp16",
+        &no_function_constants(),
+        b"",
+    )?;
+    let half = u64::from(head_dim / 2);
+    pass.encode_threads_3d(
+        &pipeline,
+        &[(qk.0, 0, qk.1), (freqs.0, 1, freqs.1)],
+        &[
+            (u32_bytes(&seq), 2),
+            (u32_bytes(&heads), 3),
+            (u32_bytes(&head_dim), 4),
+        ],
+        (half, u64::from(heads), u64::from(seq)),
+        (half.min(THREADS_PER_GROUP), 1, 1),
+    );
+    Ok(())
+}
+
 /// Bidirectional multi-head attention over one image's patches.
 ///
 /// `q`, `k`, `v` and `out` are each `[seq, heads, head_dim]` FP16. No mask

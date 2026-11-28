@@ -111,6 +111,11 @@ pub enum VisionInfo {
         marker: i32,
         fill: i32,
     },
+    /// The InternViT tower (InternVL): dynamic tiles, one
+    /// `<img> ... </img>` span per image.
+    InternVl {
+        layout: turbospark_vision_io::InternVlLayout,
+    },
     /// The DeepSeek-OCR tower (SAM + CLIP-L): one padded 1024 px base view per
     /// image and a bare marker run of 273 positions.
     DeepseekOcr {
@@ -154,6 +159,11 @@ pub enum RequestImages {
     /// Each image's tiles and placeholder run in the expanded prompt.
     SigLip {
         images: Vec<DeepseekVl2Tiles>,
+        spans: Vec<ImageSpan>,
+    },
+    /// InternVL: each image's tiles and placeholder run.
+    InternVl {
+        images: Vec<turbospark_vision_io::InternVlTiles>,
         spans: Vec<ImageSpan>,
     },
     /// DeepSeek-OCR: each image's padded base view and placeholder run.
@@ -651,6 +661,61 @@ pub(crate) fn inkling2_preprocess_all(
             let decoded = turbospark_vision_io::inkling2_decode_image_bytes(bytes)
                 .map_err(|e| format!("image {i}: {e}"))?;
             turbospark_vision_io::inkling2_preprocess(&decoded, max_tokens)
+                .map_err(|e| format!("image {i}: {e}"))
+        })
+        .collect()
+}
+
+/// The InternVL preflight: from the headers alone, check the per-request
+/// source-pixel and patch-byte budgets and return each image's
+/// placeholder-run length, which its tile grid decides.
+pub(crate) fn internvl_preflight_all(
+    encoded: &[Vec<u8>],
+    layout: &turbospark_vision_io::InternVlLayout,
+) -> Result<Vec<usize>, String> {
+    // One projector token stands for `merge^2` patches of `3 * patch^2` f32s.
+    let bytes_per_token =
+        (3 * (layout.patch * layout.merge).pow(2) * std::mem::size_of::<f32>()) as u64;
+    let mut source_pixels = 0u64;
+    let mut patch_bytes = 0u64;
+    let mut counts = Vec::with_capacity(encoded.len());
+    for (i, bytes) in encoded.iter().enumerate() {
+        let (width, height) =
+            turbospark_vision_io::image_dimensions(bytes).map_err(|e| format!("image {i}: {e}"))?;
+        source_pixels = source_pixels
+            .checked_add(u64::from(width) * u64::from(height))
+            .ok_or_else(|| "image pixel count overflows".to_string())?;
+        if source_pixels > MAX_SOURCE_PIXELS_PER_REQUEST {
+            return Err(format!(
+                "images contain {source_pixels} source pixels; the per-request limit is {MAX_SOURCE_PIXELS_PER_REQUEST}"
+            ));
+        }
+        let tokens = layout
+            .tokens_for(width as usize, height as usize)
+            .map_err(|e| format!("image {i}: {e}"))?;
+        patch_bytes = patch_bytes.saturating_add(tokens as u64 * bytes_per_token);
+        if patch_bytes > MAX_PATCH_BYTES_PER_REQUEST {
+            return Err(format!(
+                "images need {patch_bytes} bytes of preprocessed patches; the per-request limit is {MAX_PATCH_BYTES_PER_REQUEST}"
+            ));
+        }
+        counts.push(tokens);
+    }
+    Ok(counts)
+}
+
+/// Decode and tile every image for the InternViT tower, in request order.
+pub(crate) fn internvl_preprocess_all(
+    encoded: &[Vec<u8>],
+    layout: &turbospark_vision_io::InternVlLayout,
+) -> Result<Vec<turbospark_vision_io::InternVlTiles>, String> {
+    encoded
+        .iter()
+        .enumerate()
+        .map(|(i, bytes)| {
+            let decoded = turbospark_vision_io::decode_image_bytes(bytes)
+                .map_err(|e| format!("image {i}: {e}"))?;
+            turbospark_vision_io::internvl_preprocess(&decoded, layout.patch, &layout.params)
                 .map_err(|e| format!("image {i}: {e}"))
         })
         .collect()

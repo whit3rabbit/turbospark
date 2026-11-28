@@ -126,6 +126,33 @@ impl Gemma4Patches {
         })
     }
 
+    /// The same image as `gemma4_unified`'s model patches: one 48 px patch
+    /// per 3 x 3 pooling block, `[48 rows][48 cols][RGB]`, row-major over
+    /// the soft tokens, with its `(x, y)` position. Pure data movement: the
+    /// two processors share the resize and the rescale
+    /// (`_convert_image_to_model_patches`).
+    pub fn model_patches(&self) -> (Vec<f32>, Vec<(usize, usize)>) {
+        let (cols, rows) = (self.grid_w / GEMMA4_POOL, self.grid_h / GEMMA4_POOL);
+        let line = GEMMA4_PATCH * 3;
+        let mut pixels = Vec::with_capacity(self.pixels.len());
+        let mut positions = Vec::with_capacity(cols * rows);
+        for y in 0..rows {
+            for x in 0..cols {
+                for py in 0..GEMMA4_POOL {
+                    for r in 0..GEMMA4_PATCH {
+                        for px in 0..GEMMA4_POOL {
+                            let patch = (y * GEMMA4_POOL + py) * self.grid_w + x * GEMMA4_POOL + px;
+                            let at = patch * GEMMA4_PATCH_DIM + r * line;
+                            pixels.extend_from_slice(&self.pixels[at..at + line]);
+                        }
+                    }
+                }
+                positions.push((x, y));
+            }
+        }
+        (pixels, positions)
+    }
+
     pub fn num_patches(&self) -> usize {
         self.positions.len()
     }
@@ -308,6 +335,28 @@ mod tests {
         let patch1 = &p.pixels[GEMMA4_PATCH_DIM..GEMMA4_PATCH_DIM + 3];
         assert_eq!(patch1, &[16.0 / 255.0, 0.0, 1.0]);
         assert!(Gemma4Patches::from_rgb(&rgb[..3 * 50 * 48], 50, 48).is_err());
+    }
+
+    #[test]
+    fn model_patches_are_the_image_cut_at_48_px() {
+        // Two model patches across, two down, every sample distinct enough
+        // that a transposed or interleaved regroup shows.
+        let (w, h) = (96usize, 96usize);
+        let rgb: Vec<u8> = (0..w * h * 3).map(|i| (i % 241) as u8).collect();
+        let (pixels, positions) = Gemma4Patches::from_rgb(&rgb, w, h).unwrap().model_patches();
+        assert_eq!(positions, vec![(0, 0), (1, 0), (0, 1), (1, 1)]);
+        let mut want = Vec::new();
+        for (x, y) in positions {
+            for r in 0..48 {
+                let start = ((y * 48 + r) * w + x * 48) * 3;
+                want.extend(
+                    rgb[start..start + 48 * 3]
+                        .iter()
+                        .map(|&v| f32::from(v) / 255.0),
+                );
+            }
+        }
+        assert_eq!(pixels, want);
     }
 
     const IDS: Gemma4ImageIds = Gemma4ImageIds {

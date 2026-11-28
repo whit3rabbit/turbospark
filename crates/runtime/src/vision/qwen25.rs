@@ -241,6 +241,24 @@ impl BlockBinding<'_> {
     }
 }
 
+/// Device bytes `Qwen25Scratch::allocate` asks for on a page of `seq`
+/// patches. `vision::budget` solves the pixel ceiling against this, so it lists
+/// every buffer that struct holds; a unit test sums the real lengths against
+/// it. Windowing changes the attention work, not these sizes: the full blocks
+/// (7, 15, 23, 31) need the whole page anyway, and neither kind of block
+/// allocates a `seq x seq` buffer.
+pub(crate) fn scratch_bytes(d: &Qwen25Dims, seq: usize, tile: usize) -> u64 {
+    let merged = seq / (d.merge * d.merge);
+    let tile = tile.min(seq).max(1);
+    let fp16 = seq * d.patch_dim // rows
+        + seq * d.hidden * 7 // x, normed, q, k, v, attn, proj
+        + tile * d.intermediate * 2 // gate, up
+        + merged * d.merged_width() // merger_hidden
+        + merged * d.out_hidden; // out
+    let f32s = seq * (d.head_dim / 2); // freqs
+    (fp16 * 2 + f32s * 4) as u64
+}
+
 /// Per-image GPU scratch.
 pub(crate) struct Qwen25Scratch {
     seq: usize,
@@ -797,10 +815,7 @@ impl Qwen25VisionTower {
                 &freqs,
                 layout.segments.clone(),
             );
-            *last_scratch = (seq * d.hidden * 2 * 7
-                + 2 * s.tile * d.intermediate * 2
-                + merged * d.merged_width() * 2
-                + merged * d.out_hidden * 2) as u64;
+            *last_scratch = scratch_bytes(&d, seq, QWEN25_MLP_TILE_ROWS);
             let wide = seq * d.hidden;
 
             let pass = context.begin_pass();
@@ -925,6 +940,67 @@ fn read_bits(buffer: &gpu::MetalBuffer, count: usize) -> Vec<u16> {
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
+
+    /// The budget formula against the buffers really allocated, with a tile
+    /// smaller than the page so the MLP cap is exercised.
+    #[test]
+    fn scratch_bytes_is_the_sum_of_the_allocated_buffers() {
+        let d = Qwen25Dims {
+            depth: 1,
+            hidden: 16,
+            intermediate: 40,
+            heads: 2,
+            head_dim: 8,
+            patch_dim: 12,
+            patch_size: 14,
+            merge: 2,
+            out_hidden: 24,
+        };
+        let (seq, tile) = (32usize, 5usize);
+        let context = gpu::MetalContext::new().expect("a Metal device");
+        let rows = vec![half::f16::ZERO; seq * d.patch_dim];
+        let freqs = vec![0f32; seq * d.head_dim / 2];
+        let s = Qwen25Scratch::allocate(&context, &d, seq, tile, &rows, &freqs, vec![seq]);
+        // Exhaustive on purpose: a new buffer stops this compiling until it is
+        // counted here and in `scratch_bytes`.
+        let Qwen25Scratch {
+            seq: _,
+            tile: _,
+            segments: _,
+            rows,
+            x,
+            normed,
+            q,
+            k,
+            v,
+            attn,
+            proj,
+            gate,
+            up,
+            merger_hidden,
+            out,
+            freqs,
+        } = &s;
+        let total: u64 = [
+            rows,
+            x,
+            normed,
+            q,
+            k,
+            v,
+            attn,
+            proj,
+            gate,
+            up,
+            merger_hidden,
+            out,
+            freqs,
+        ]
+        .iter()
+        .map(|b| b.length())
+        .sum();
+        assert_eq!(scratch_bytes(&d, seq, tile), total);
+    }
 
     /// The reference's `get_window_index` on a grid whose edges neither fill
     /// nor align with the window: a 10x14 merged grid (patch grid 20x28) has

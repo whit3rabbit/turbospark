@@ -105,6 +105,34 @@ fn round7_trunc(x: f64) -> usize {
     ((x * 1e7).round() / 1e7) as usize
 }
 
+/// Hugging Face's `unpad_image`: the rows `[y0, y1)` and columns `[x0, x1)`
+/// of a `(map_h, map_w)` feature map that came from image pixels rather than
+/// the aspect padding. Shared with LLaVA 1.6 (`crate::llava_next`).
+pub(crate) fn unpad_window(
+    orig_h: usize,
+    orig_w: usize,
+    map_h: usize,
+    map_w: usize,
+) -> (usize, usize, usize, usize) {
+    let orig_aspect = orig_w as f64 / orig_h as f64;
+    let cur_aspect = map_w as f64 / map_h as f64;
+    let (mut y0, mut y1, mut x0, mut x1) = (0, map_h, 0, map_w);
+    if orig_aspect > cur_aspect {
+        let scale = map_w as f64 / orig_w as f64;
+        let new_h = round7_trunc(orig_h as f64 * scale);
+        let pad = map_h.saturating_sub(new_h) / 2;
+        y0 = pad;
+        y1 = map_h - pad;
+    } else {
+        let scale = map_h as f64 / orig_h as f64;
+        let new_w = round7_trunc(orig_w as f64 * scale);
+        let pad = map_w.saturating_sub(new_w) / 2;
+        x0 = pad;
+        x1 = map_w - pad;
+    }
+    (y0, y1, x0, x1)
+}
+
 /// The packing geometry for one image: where the grid's feature map is
 /// cropped, and the size it ends at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -143,23 +171,7 @@ impl OvPlan {
 pub fn ov_plan(orig_h: usize, orig_w: usize, tiles_h: usize, tiles_w: usize) -> OvPlan {
     let map_h = tiles_h * OV_SIDE;
     let map_w = tiles_w * OV_SIDE;
-    // `unpad_image`.
-    let orig_aspect = orig_w as f64 / orig_h as f64;
-    let cur_aspect = map_w as f64 / map_h as f64;
-    let (mut y0, mut y1, mut x0, mut x1) = (0, map_h, 0, map_w);
-    if orig_aspect > cur_aspect {
-        let scale = map_w as f64 / orig_w as f64;
-        let new_h = round7_trunc(orig_h as f64 * scale);
-        let pad = map_h.saturating_sub(new_h) / 2;
-        y0 = pad;
-        y1 = map_h - pad;
-    } else {
-        let scale = map_h as f64 / orig_h as f64;
-        let new_w = round7_trunc(orig_w as f64 * scale);
-        let pad = map_w.saturating_sub(new_w) / 2;
-        x0 = pad;
-        x1 = map_w - pad;
-    }
+    let (y0, y1, x0, x1) = unpad_window(orig_h, orig_w, map_h, map_w);
     let (cur_h, cur_w) = (y1 - y0, x1 - x0);
     let (mut out_h, mut out_w) = (cur_h, cur_w);
     let ratio = ((cur_h * cur_w) as f64 / (OV_MAX_AREA_TILES * OV_SIDE * OV_SIDE) as f64).sqrt();
@@ -258,10 +270,12 @@ pub fn parse_pinpoints(root: &serde_json::Value) -> Result<Vec<(usize, usize)>, 
     Ok(out)
 }
 
-/// Normalize and patchify one 384x384 tile of `data` (an interleaved RGB
-/// canvas `canvas_w` wide) whose top-left corner is `(top, left)`.
+/// Normalize and patchify one square tile of `side` x `side` patches of
+/// `data` (an interleaved RGB canvas `canvas_w` wide) whose top-left corner is
+/// `(top, left)`.
 #[allow(clippy::too_many_arguments)]
-fn push_tile(
+pub(crate) fn push_tile(
+    side: usize,
     out: &mut Vec<f32>,
     data: &[u8],
     canvas_w: usize,
@@ -271,8 +285,8 @@ fn push_tile(
     std: [f32; 3],
     rescale: f32,
 ) {
-    for py in 0..OV_SIDE {
-        for px in 0..OV_SIDE {
+    for py in 0..side {
+        for px in 0..side {
             for c in 0..3 {
                 for r in 0..OV_PATCH {
                     let y = top + py * OV_PATCH + r;
@@ -285,6 +299,28 @@ fn push_tile(
             }
         }
     }
+}
+
+/// The anyres canvas: the image resized to fit `(target_h, target_w)` with its
+/// aspect kept, centered on ZERO raw pixels (before normalization), the floor
+/// of the pad before it. Shared with LLaVA 1.6.
+pub(crate) fn centered_canvas(image: &Rgb8Image, target_h: usize, target_w: usize) -> Vec<u8> {
+    let (oh, ow) = (image.height, image.width);
+    let (nh, nw) = ov_patch_output_size(oh, ow, target_h, target_w);
+    let resized;
+    let resized_data: &[u8] = if (nw, nh) == (ow, oh) {
+        &image.data
+    } else {
+        resized = resize_bicubic_pil(&image.data, ow, oh, nw, nh);
+        &resized
+    };
+    let (top, left) = ((target_h - nh) / 2, (target_w - nw) / 2);
+    let mut canvas = vec![0u8; target_h * target_w * 3];
+    for y in 0..nh {
+        let dst = ((top + y) * target_w + left) * 3;
+        canvas[dst..dst + nw * 3].copy_from_slice(&resized_data[y * nw * 3..(y + 1) * nw * 3]);
+    }
+    canvas
 }
 
 /// Resize, pad, tile, normalize and patchify one decoded image.
@@ -313,26 +349,24 @@ pub fn ov_preprocess(
         base = resize_bicubic_pil(&image.data, ow, oh, OV_TILE, OV_TILE);
         &base
     };
-    push_tile(&mut pixels, base_data, OV_TILE, 0, 0, mean, std, rescale);
+    push_tile(
+        OV_SIDE,
+        &mut pixels,
+        base_data,
+        OV_TILE,
+        0,
+        0,
+        mean,
+        std,
+        rescale,
+    );
 
     // The grid: aspect-kept resize, centered on a zero canvas.
-    let (nh, nw) = ov_patch_output_size(oh, ow, target_h, target_w);
-    let resized;
-    let resized_data: &[u8] = if (nw, nh) == (ow, oh) {
-        &image.data
-    } else {
-        resized = resize_bicubic_pil(&image.data, ow, oh, nw, nh);
-        &resized
-    };
-    let (top, left) = ((target_h - nh) / 2, (target_w - nw) / 2);
-    let mut canvas = vec![0u8; target_h * target_w * 3];
-    for y in 0..nh {
-        let dst = ((top + y) * target_w + left) * 3;
-        canvas[dst..dst + nw * 3].copy_from_slice(&resized_data[y * nw * 3..(y + 1) * nw * 3]);
-    }
+    let canvas = centered_canvas(image, target_h, target_w);
     for ty in 0..tiles_h {
         for tx in 0..tiles_w {
             push_tile(
+                OV_SIDE,
                 &mut pixels,
                 &canvas,
                 target_w,

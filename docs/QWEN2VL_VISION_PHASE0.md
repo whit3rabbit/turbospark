@@ -155,6 +155,35 @@ below resizes to 896x1120 exactly (32x40 patches, 320 merged tokens).
 parameter-driven, and the default `attach` path reaches `encode_image`, which
 dispatches on the tower kind.
 
+## Vision pixel budget
+
+`resolve_vision_pixel_budget` covers this tower and the 2.5 one under the same
+policy as the others (`vision::budget`): clamp `max_pixels` until the page's
+scratch fits `physical - guard reserve - weights/expert cache - KV cache`,
+refuse if `min_pixels` does not fit, and do nothing under `--load-guard off`.
+Having no position table, they skip `VisionShape` and use their own
+`scratch_bytes` (`vision/qwen2.rs`, `vision/qwen25.rs`), which a unit test
+holds equal to the summed lengths of the allocated buffers. Full attention adds
+no `patches x patches` buffer, so scratch is linear in the page on both towers;
+windowing on 2.5 changes the work, not the memory.
+
+Computed (not measured) scratch at the declared 12,845,056 pixels (65,536
+patches, 16,384 merged tokens):
+
+| Tower | Bytes |
+| --- | --- |
+| Qwen2-VL 2B | 1,567,621,120 (1.46 GiB) |
+| Qwen2-VL 7B | 1,634,729,984 (1.52 GiB) |
+| Qwen2.5-VL 3B | 1,587,920,896 (1.48 GiB) |
+| Qwen2.5-VL 7B | 1,638,252,544 (1.53 GiB) |
+
+Under the default `relaxed` guard (4 GiB reserve) the 3B and 2B ceilings stand
+unclamped while weights plus KV cache stay under about 30.5 GiB on a 36 GiB
+machine and 10.5 GiB on a 16 GiB one. So on either, an ordinary session still
+serves `max_pixels` 12,845,056. The clamp acts on small or heavily committed
+machines. Host-side copies of the patch rows are not counted, as for the other
+towers.
+
 ## Gates
 
 ### Real install, end to end (2B, combined)
@@ -239,10 +268,10 @@ config parser's refusals, and the registry exact-equality.
   far.
 - **The mRoPE seam is pinned synthetically**, not on the real checkpoint:
   `families/llama/attn.rs::mrope_seam_tests`.
-- **No vision pixel budget on this tower.** `VisionShape::resolve` refuses a
-  tower with no position table, so `resolve_vision_pixel_budget` passes the
-  declared `max_pixels` through unclamped (the 2.5 tower is the same). Every
-  block here attends over the whole page.
+- **A large page's GPU time and real peak memory.** The pixel budget below
+  bounds scratch memory only. Every block attends over the whole page, so work
+  grows with the square of the patch count and nothing caps it. No page near
+  `max_pixels` has been run.
 - **Logit parity of the trunk with an image**, the 7B checkpoint, video, and
   chunked prefill with an image on this family (the text smoke took the
   chunked path unchanged; an image prompt was not driven through chunked

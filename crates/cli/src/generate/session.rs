@@ -93,7 +93,7 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
     let trunk_family = arch.family;
     let trunk_hidden_size = arch.hidden_size;
 
-    let tokenizer = MfTokenizer::load_from_dir(model_dir).map_err(|e| {
+    let mut tokenizer = MfTokenizer::load_from_dir(model_dir).map_err(|e| {
         format!(
             "failed to load a tokenizer from {}: {e}",
             model_dir.display()
@@ -413,6 +413,13 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
     let profile = runtime::resolve_profile(request.power_profile.map(map_power_profile));
     let rate = runtime::rate_control_for(profile, request.max_tokens_per_sec);
 
+    if let Some(marker) = runner.image_part_marker() {
+        tokenizer.set_image_part_marker(marker);
+    }
+    // After the sidecar attach above: LLaVA 1.6's tower arrives that way.
+    if runner.is_llava_next_vision() {
+        tokenizer.set_string_content_as_parts();
+    }
     Ok(Session {
         tokenizer,
         runner,

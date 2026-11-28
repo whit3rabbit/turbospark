@@ -269,7 +269,24 @@ pub fn build_synthetic_gemma4_dense_real_install(
     arch.sliding_window = sliding_window;
     arch.full_attention_layer_mask = (0..num_layers).map(|l| (l % 6 == 5) as u8).collect();
 
-    let vocab = vocab_size as usize;
+    let ts = dense_trunk_tensors(vocab_size as usize, num_layers);
+
+    let blob = assemble_safetensors(&ts);
+    let source = MemoryRangeSource::new(&blob);
+    let header = parse_header(&blob, crate::safetensors_header::DEFAULT_MAX_HEADER_BYTES)?;
+    let quant = Gemma4Quant {
+        default_bits: 8,
+        group_size: 64,
+        bits_overrides: std::collections::HashMap::new(),
+        ..Default::default()
+    };
+    write_gemma4_install(dir, &arch, model_id, &header, &source, &quant)?;
+    Ok(arch)
+}
+
+/// The dense trunk's tensors, shared with the `gemma4_unified` fixture
+/// (`crate::synthetic_gemma4_unified`).
+pub(crate) fn dense_trunk_tensors(vocab: usize, num_layers: i64) -> Vec<Tensor> {
     let qk_dim = NUM_HEADS * HEAD_DIM;
 
     let mut ts: Vec<Tensor> = Vec::new();
@@ -364,16 +381,5 @@ pub fn build_synthetic_gemma4_dense_real_install(
         1.0,
         7,
     ));
-
-    let blob = assemble_safetensors(&ts);
-    let source = MemoryRangeSource::new(&blob);
-    let header = parse_header(&blob, crate::safetensors_header::DEFAULT_MAX_HEADER_BYTES)?;
-    let quant = Gemma4Quant {
-        default_bits: 8,
-        group_size: 64,
-        bits_overrides: std::collections::HashMap::new(),
-        ..Default::default()
-    };
-    write_gemma4_install(dir, &arch, model_id, &header, &source, &quant)?;
-    Ok(arch)
+    ts
 }

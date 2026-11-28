@@ -166,9 +166,26 @@ own template rendered: the `internvl` wrapper's template emits bare
 `<IMG_CONTEXT>`, the `internvl_chat` one emits `<img>` -- a rendered prompt
 carrying NEITHER is refused, one carrying BOTH is refused as expanded.
 The published `internvl_chat` template is TEXT-ONLY (a plain Qwen2 template
-whose string concatenation cannot render a content-part list), so an image
-turn's parts are flattened into `<img>\n` markers before rendering
-(`flatten_internvl_parts`, the DeepSeekV2 flatten's shape).
+whose string concatenation cannot render a content-part list), so each image
+part is flattened into an `<img>\n` marker before rendering. The opener sets
+this once (`RealForwardRunner::image_part_marker` into
+`MfTokenizer::set_image_part_marker`), so plain chat, tool chat, token counts
+and window fitting render alike on every front end.
+
+## Front ends
+
+The CLI, `ts_generate`, the in-process FFI server and `turbospark serve`
+share one layout (`turbospark_vision_io::InternVlLayout`, resolved by
+`RealForwardRunner::internvl_layout`) and one injection
+(`RealForwardRunner::set_prompt_internvl`). The HTTP paths count each image's
+tokens from its header and check the context before decoding pixels, under the
+same per-request image count, source-pixel and patch-byte limits as the other
+towers. Earlier turns' images are re-encoded from the history the caller
+sends. Image prompts take no KV prefix reuse. The server image path does not
+speculate; `ts_generate` has no separate image gate, and relies on an InternVL
+install carrying no drafter. A sidecar is refused by name. A literal `<img>`
+in the text of an image request is a placeholder count mismatch and is
+refused.
 
 ## Gates
 
@@ -260,12 +277,16 @@ Restored, all tests green.
   table bicubically for grids other than the training one; this port
   refuses such inputs. The dynamic tiling always feeds the tower's own
   size, so nothing published reaches the refusal.
-- **No quality gate or memory oracle, and no server or app support.** The
-  smokes ran through the CLI only. `crates/ffi/src/vision.rs::attach_internvl`
-  exists but has never run, and the FFI path is incomplete: it does not
-  flatten content parts for the text-only `internvl_chat` template, and its
-  session vision report reads `preprocessor_config.json` with the Qwen
-  reader, which requires `patch_size` keys. The server has no InternViT arm.
+- **No quality gate or memory oracle.**
+- **No real-weights FFI, server or app run.** The CLI smokes above are the
+  only ones on real weights, and they predate the move of the splice into the
+  shared layout. `ts_generate`, the in-process server and the real server are
+  tested on a synthetic install only
+  (`crates/ffi/tests/internvl_vision_synthetic.rs`,
+  `crates/server/tests/internvl_vision_synthetic.rs`): untrained weights, a
+  hand-written text-only template and tokenizer, checking token counts and that
+  pixels change the output. The macOS app was not run. A real gate needs
+  `mlx-community/InternVL3-1B-4bit@7927bb6b86987f19398a14eee20a73c45fdb1867`.
 - **No video.** The wrappers' processors have video paths; this port's
   InternViT path is stills only.
 - **`mini`/`blob` variants, 6B towers** (`intern_vit_6b` is the model_type

@@ -340,9 +340,21 @@ pub fn read_vision_entries_quantized(
     if vision.tower == model_io::VisionTowerKind::Gemma4 {
         return super::vision_gemma4::read_gemma4_vision_entries(shards, vision_bases, vision);
     }
+    // The encoder-free `gemma4_unified` embedder: one blob, no blocks.
+    if vision.tower == model_io::VisionTowerKind::Gemma4Unified {
+        return super::vision_gemma4_unified::read_gemma4_unified_vision_entries(
+            shards,
+            vision_bases,
+            vision,
+            quant,
+        );
+    }
     // CLIP (LLaVA) likewise: its own names, its own fused q/k/v, its own
     // dropped tail. It ships unquantized planes only.
-    if vision.tower == model_io::VisionTowerKind::Clip {
+    if matches!(
+        vision.tower,
+        model_io::VisionTowerKind::Clip | model_io::VisionTowerKind::ClipNext
+    ) {
         return super::vision_clip::read_clip_vision_entries(shards, vision_bases, vision);
     }
     // The MiniCPM-V tower: three source prefixes (`vision_tower.`,
@@ -420,6 +432,10 @@ pub fn read_vision_entries_quantized(
     // quantizes the adapter and projection, so it has its own reader.
     if vision.tower == model_io::VisionTowerKind::MuseGlimmer {
         return super::vision_muse::read_muse_vision_entries(shards, vision_bases, vision, quant);
+    }
+    // Mage-ViT: `encoder.layers.N.` names and a LayerNorm ahead of block 0.
+    if vision.tower == model_io::VisionTowerKind::MageVit {
+        return super::vision_mage::read_mage_vl_vision_entries(shards, vision_bases, vision);
     }
     // The Qwen2.5-VL and Qwen2-VL towers share this reader's walk and differ
     // in their role tables and supported depths.

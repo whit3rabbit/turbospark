@@ -494,6 +494,12 @@ pub struct MfTokenizer {
     /// [`crate::jinja_chat_template`] for BOTH tool chat and plain text
     /// chat; `None` means fall back to the per-dialect renderer.
     pub(crate) chat_template_source: Option<String>,
+    /// Set by the host for a vision install whose template cannot render a
+    /// content-part list ([`Self::set_image_part_marker`]).
+    pub(crate) image_part_marker: Option<&'static str>,
+    /// Set by the host for a vision install whose template only renders
+    /// list-typed content ([`Self::set_string_content_as_parts`]).
+    pub(crate) string_content_as_parts: bool,
 }
 
 impl MfTokenizer {
@@ -587,7 +593,27 @@ impl MfTokenizer {
             vocab_size: resolved.vocab_size,
             tokenizer,
             chat_template_source,
+            image_part_marker: None,
+            string_content_as_parts: false,
         })
+    }
+
+    /// Make every multimodal message render as a STRING, each image part
+    /// spelled `marker`, for an install whose own template concatenates
+    /// `content` (InternVL's `internvl_chat`). Which install needs it is a
+    /// property of the vision tower, which this crate cannot see, so the host
+    /// sets it once at open and every render path then agrees.
+    pub fn set_image_part_marker(&mut self, marker: &'static str) {
+        self.image_part_marker = Some(marker);
+    }
+
+    /// Hand a plain-string turn to the template as one text part, as the
+    /// upstream multimodal processor does. LLaVA 1.6's templates iterate or
+    /// index `content` as a list, so a bare string renders as an empty turn.
+    /// Set by the host from the vision tower, like
+    /// [`Self::set_image_part_marker`].
+    pub fn set_string_content_as_parts(&mut self) {
+        self.string_content_as_parts = true;
     }
 
     /// Encode UTF-8 text to token IDs. `add_bos = true` prepends the

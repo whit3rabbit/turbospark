@@ -31,6 +31,11 @@
 //! into an fc1 slot, which is exactly the shape-correct, fluent-wrong
 //! failure [`Qwen2Dims::resolve`] and the runtime block resolver's size
 //! checks exist to refuse.
+//!
+//! **Mage-ViT** (`VisionTowerKind::MageVit`, `docs/MAGE_VL_VISION_PHASE0.md`)
+//! runs here too: the same twelve roles, full attention and merger, with a
+//! LayerNorm between the patch embedding and block 0, the exact erf GELU in
+//! the block MLP, and its own three-axis interleaved rope.
 
 use std::path::Path;
 
@@ -103,11 +108,14 @@ pub(crate) struct Qwen2Dims {
     pub(crate) patch_size: usize,
     pub(crate) merge: usize,
     pub(crate) out_hidden: usize,
+    /// The tower is Mage-ViT rather than Qwen2-VL.
+    pub(crate) mage: bool,
 }
 
 impl Qwen2Dims {
     pub(crate) fn resolve(v: &VisionConfig) -> Result<Self, RealForwardError> {
-        if v.tower != VisionTowerKind::Qwen2Vl || !v.is_active() {
+        let mage = v.tower == VisionTowerKind::MageVit;
+        if !(mage || v.tower == VisionTowerKind::Qwen2Vl) || !v.is_active() {
             return Err(RealForwardError::Unsupported(format!(
                 "not an active qwen2-vl vision tower (kind {})",
                 v.tower.as_str()
@@ -132,7 +140,14 @@ impl Qwen2Dims {
             patch_size: us(v.patch_size, "patch_size")?,
             merge: us(v.spatial_merge_size, "spatial_merge_size")?,
             out_hidden: us(v.out_hidden_size, "out_hidden_size")?,
+            mage,
         };
+        if mage && d.head_dim % 32 != 0 {
+            return Err(RealForwardError::Unsupported(format!(
+                "mage_vit head_dim {} is not a multiple of 32, which its 4:6:6 rope needs",
+                d.head_dim
+            )));
+        }
         if d.heads * d.head_dim != d.hidden || d.head_dim % 4 != 0 {
             return Err(RealForwardError::Unsupported(format!(
                 "qwen2 vision embed_dim {} over {} heads does not give a head_dim divisible \
@@ -234,6 +249,23 @@ impl BlockBinding<'_> {
     fn w(&self, role: R) -> (&gpu::MetalBuffer, u64) {
         (self.buffer, self.base + self.roles.at(role))
     }
+}
+
+/// Device bytes `Qwen2Scratch::allocate` asks for on a page of `seq` patches.
+/// `vision::budget` solves the pixel ceiling against this, so it lists every
+/// buffer that struct holds; a unit test sums the real lengths against it.
+/// Full attention adds no `seq x seq` buffer: the kernel streams the keys
+/// through threadgroup memory, so scratch is linear in the page.
+pub(crate) fn scratch_bytes(d: &Qwen2Dims, seq: usize, tile: usize) -> u64 {
+    let merged = seq / (d.merge * d.merge);
+    let tile = tile.min(seq).max(1);
+    let fp16 = seq * d.patch_dim // rows
+        + seq * d.hidden * 7 // x, normed, q, k, v, attn, proj
+        + tile * d.intermediate // h1
+        + merged * d.merged_width() // merger_hidden
+        + merged * d.out_hidden; // out
+    let f32s = seq * (d.head_dim / 2); // freqs
+    (fp16 * 2 + f32s * 4) as u64
 }
 
 /// Per-image GPU scratch.
@@ -342,7 +374,12 @@ pub(crate) fn encode_block(
 
     // Q AND K ONLY: v carries no positional rotation.
     for target in [&s.q, &s.k] {
-        gpu::encode_vision_rope_2d(
+        let rope = if d.mage {
+            gpu::encode_vision_rope_interleaved
+        } else {
+            gpu::encode_vision_rope_2d
+        };
+        rope(
             context,
             pass,
             (target, 0),
@@ -421,7 +458,11 @@ pub(crate) fn encode_block(
             pass,
             (&s.h1, 0),
             (rows * d.intermediate) as u32,
-            gpu::GeluKind::Quick,
+            if d.mage {
+                gpu::GeluKind::Erf
+            } else {
+                gpu::GeluKind::Quick
+            },
         )
         .map_err(e)?;
         gpu::encode_vision_matmul(
@@ -444,6 +485,8 @@ pub(crate) fn encode_block(
 /// The resident tensors a tower reads outside its blocks.
 struct Qwen2Resident {
     patch_embed: u64,
+    /// Mage-ViT's `layernorm_pre` weight and bias.
+    pre_norm: Option<(u64, u64)>,
     ln_q_w: u64,
     ln_q_b: u64,
     fc1_w: u64,
@@ -462,6 +505,14 @@ impl Qwen2Resident {
                 &name("patch_embed.proj.weight"),
                 d.hidden * d.patch_dim,
             )?,
+            pre_norm: if d.mage {
+                Some((
+                    fp16_view(index, &name("layernorm_pre.weight"), d.hidden)?,
+                    fp16_view(index, &name("layernorm_pre.bias"), d.hidden)?,
+                ))
+            } else {
+                None
+            },
             ln_q_w: fp16_view(index, &name("merger.ln_q.weight"), d.hidden)?,
             ln_q_b: fp16_view(index, &name("merger.ln_q.bias"), d.hidden)?,
             fc1_w: fp16_view(index, &name("merger.mlp.0.weight"), mw * mw)?,
@@ -657,10 +708,13 @@ impl Qwen2VisionTower {
             .iter()
             .map(|&v| half::f16::from_f32(v))
             .collect();
-        let freqs = turbospark_vision_io::rope::vision_rope_freq_rows_default(
-            image.grid, d.head_dim, params,
-        )
-        .map_err(|e| RealForwardError::Unsupported(format!("vision rope rows: {e}")))?;
+        let rope_rows = if d.mage {
+            turbospark_vision_io::rope::mage_vit_rope_rows
+        } else {
+            turbospark_vision_io::rope::vision_rope_freq_rows_default
+        };
+        let freqs = rope_rows(image.grid, d.head_dim, params)
+            .map_err(|e| RealForwardError::Unsupported(format!("vision rope rows: {e}")))?;
 
         let w = self.sidecar_weights.as_ref().unwrap_or(weights);
         let per_unit = d.merge * d.merge;
@@ -672,10 +726,7 @@ impl Qwen2VisionTower {
         gpu::autorelease_pool(|| {
             let e = RealForwardError::Gpu;
             let s = Qwen2Scratch::allocate(context, &d, seq, QWEN2_MLP_TILE_ROWS, &rows16, &freqs);
-            *last_scratch = (seq * d.hidden * 2 * 7
-                + s.tile * d.intermediate * 2
-                + merged * d.merged_width() * 2
-                + merged * d.out_hidden * 2) as u64;
+            *last_scratch = scratch_bytes(&d, seq, QWEN2_MLP_TILE_ROWS);
             let wide = seq * d.hidden;
 
             let pass = context.begin_pass();
@@ -685,12 +736,33 @@ impl Qwen2VisionTower {
                 (&s.rows, 0),
                 (w.buffer(), w.gpu_offset(resident.patch_embed)),
                 None,
-                (&s.x, 0),
+                (
+                    if resident.pre_norm.is_some() {
+                        &s.normed
+                    } else {
+                        &s.x
+                    },
+                    0,
+                ),
                 seq as u32,
                 d.patch_dim as u32,
                 d.hidden as u32,
             )
             .map_err(e)?;
+            if let Some((weight, bias)) = resident.pre_norm {
+                gpu::encode_vision_layer_norm(
+                    context,
+                    &pass,
+                    (&s.normed, 0),
+                    (w.buffer(), w.gpu_offset(weight)),
+                    (w.buffer(), w.gpu_offset(bias)),
+                    (&s.x, 0),
+                    seq as u32,
+                    d.hidden as u32,
+                    EPS,
+                )
+                .map_err(e)?;
+            }
             pass.commit_and_wait();
             if let Some(c) = capture.as_mut() {
                 c.patch_embed = read_bits(&s.x, wide);
@@ -894,6 +966,7 @@ mod tests {
                 patch_size: 14,
                 merge: 2,
                 out_hidden: 1536,
+                mage: false,
             }
             .role_elems(role)
         };
@@ -965,6 +1038,66 @@ mod tests {
             .collect()
     }
 
+    /// The budget formula against the buffers really allocated, with a tile
+    /// smaller than the page so the MLP cap is exercised.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn scratch_bytes_is_the_sum_of_the_allocated_buffers() {
+        let d = Qwen2Dims {
+            depth: 1,
+            hidden: 16,
+            intermediate: 40,
+            heads: 2,
+            head_dim: 8,
+            patch_dim: 12,
+            patch_size: 14,
+            merge: 2,
+            out_hidden: 24,
+            mage: false,
+        };
+        let (seq, tile) = (32usize, 5usize);
+        let context = gpu::MetalContext::new().expect("a Metal device");
+        let rows = vec![half::f16::ZERO; seq * d.patch_dim];
+        let freqs = vec![0f32; seq * d.head_dim / 2];
+        let s = Qwen2Scratch::allocate(&context, &d, seq, tile, &rows, &freqs);
+        // Exhaustive on purpose: a new buffer stops this compiling until it is
+        // counted here and in `scratch_bytes`.
+        let Qwen2Scratch {
+            seq: _,
+            tile: _,
+            rows,
+            x,
+            normed,
+            q,
+            k,
+            v,
+            attn,
+            proj,
+            h1,
+            merger_hidden,
+            out,
+            freqs,
+        } = &s;
+        let total: u64 = [
+            rows,
+            x,
+            normed,
+            q,
+            k,
+            v,
+            attn,
+            proj,
+            h1,
+            merger_hidden,
+            out,
+            freqs,
+        ]
+        .iter()
+        .map(|b| b.length())
+        .sum();
+        assert_eq!(scratch_bytes(&d, seq, tile), total);
+    }
+
     /// One block on Metal against a plain CPU transcription of the
     /// reference's `Qwen2VLVisionBlock`, at tiny widths with an MLP tile
     /// smaller than the page.
@@ -981,6 +1114,7 @@ mod tests {
             patch_size: 14,
             merge: 2,
             out_hidden: 8,
+            mage: false,
         };
         let (h, seq, half) = (d.hidden, 8usize, d.head_dim / 2);
         let mut seed = 0u32;

@@ -407,6 +407,148 @@ pub fn build_synthetic_idefics3_install(
     Ok((arch, tower))
 }
 
+/// Writes a tiny dense Qwen2 install carrying an InternViT tower under the
+/// `internvl_chat` names, through the real repack walk, plus the sidecars an
+/// image request needs end to end: a tokenizer, the TEXT-ONLY template shape
+/// the published checkpoints ship (it concatenates `content`, so it cannot
+/// render a part list) and `preprocessor_config.json`.
+///
+/// `tokenizer_json` is a small ChatML `tokenizer.json`; its added tokens are
+/// renumbered to follow the base vocabulary so every id has a row in the
+/// returned arch's `vocab_size`, and `<img>`, `</img>`, `<IMG_CONTEXT>` are
+/// appended.
+///
+/// Tower: hidden 16, 2 heads, MLP 24, 2 blocks, patch 14 over a 56-pixel tile
+/// (a 4x4 grid), pixel shuffle 2, so one tile is 4 context positions.
+pub fn build_synthetic_internvl_install(
+    dir: &std::path::Path,
+    tokenizer_json: &str,
+    num_layers: i64,
+    model_id: &str,
+) -> Result<ArchConfig, Box<dyn std::error::Error>> {
+    const H: usize = 16;
+    const MLP: usize = 24;
+    const DEPTH: usize = 2;
+    const PATCH: usize = 14;
+    const SIDE: usize = 4;
+    const MERGE: usize = 2;
+
+    let mut tokenizer: serde_json::Value = serde_json::from_str(tokenizer_json)?;
+    let base_vocab = tokenizer["model"]["vocab"]
+        .as_object()
+        .and_then(|v| v.values().filter_map(serde_json::Value::as_u64).max())
+        .ok_or("tokenizer.json has no model.vocab")?
+        + 1;
+    let added = tokenizer["added_tokens"]
+        .as_array_mut()
+        .ok_or("tokenizer.json has no added_tokens")?;
+    let template_token = added.first().cloned().ok_or("added_tokens is empty")?;
+    for content in ["<img>", "</img>", "<IMG_CONTEXT>"] {
+        let mut token = template_token.clone();
+        token["content"] = content.into();
+        added.push(token);
+    }
+    for (offset, token) in added.iter_mut().enumerate() {
+        token["id"] = (base_vocab + offset as u64).into();
+    }
+    // `<IMG_CONTEXT>` is the last one appended.
+    let image_token_id = base_vocab as i64 + added.len() as i64 - 1;
+    let vocab_size = image_token_id + 1;
+
+    let mut arch = tiny_gqa_moe_arch(vocab_size, num_layers, 0, ModelFamily::Qwen2Dense);
+    arch.vision = VisionConfig {
+        depth: DEPTH as i64,
+        hidden_size: H as i64,
+        intermediate_size: MLP as i64,
+        num_heads: 2,
+        patch_size: PATCH as i64,
+        temporal_patch_size: 1,
+        in_channels: 3,
+        spatial_merge_size: MERGE as i64,
+        num_position_embeddings: (SIDE * SIDE + 1) as i64,
+        out_hidden_size: HIDDEN as i64,
+        mrope_section: [0, 0, 0],
+        deepstack_visual_indexes: Vec::new(),
+        vision_start_token_id: 0,
+        vision_end_token_id: 0,
+        image_token_id,
+        video_token_id: 0,
+        tower: model_io::VisionTowerKind::InternViT,
+    };
+
+    let mut tensors: Vec<Tensor> = Vec::new();
+    let mut add = |name: String, shape: &[usize], center: f32, amplitude: f32| {
+        let n: usize = shape.iter().product();
+        let bits: Vec<u16> = deterministic_row(7_000 + tensors.len() as u64, n)
+            .iter()
+            .map(|&j| compute::f32_to_bf16(center + j * amplitude))
+            .collect();
+        tensors.push(Tensor {
+            name,
+            dtype: "BF16",
+            shape: shape.iter().map(|&d| d as u64).collect(),
+            bytes: crate::synthetic_tensors::u16_le(&bits),
+        });
+    };
+    let base = "vision_model.embeddings.";
+    add(format!("{base}class_embedding"), &[H], 0.0, 0.4);
+    add(
+        format!("{base}patch_embedding.weight"),
+        &[H, PATCH, PATCH, 3],
+        0.0,
+        0.2,
+    );
+    add(format!("{base}patch_embedding.bias"), &[H], 0.0, 0.2);
+    add(
+        format!("{base}position_embedding"),
+        &[SIDE * SIDE + 1, H],
+        0.0,
+        0.5,
+    );
+    for blk in 0..DEPTH {
+        let p = format!("vision_model.encoder.layers.{blk}.");
+        for norm in ["norm1", "norm2"] {
+            add(format!("{p}{norm}.weight"), &[H], 1.0, 0.2);
+            add(format!("{p}{norm}.bias"), &[H], 0.0, 0.2);
+        }
+        add(format!("{p}attn.qkv.weight"), &[3 * H, H], 0.0, 0.4);
+        add(format!("{p}attn.qkv.bias"), &[3 * H], 0.0, 0.2);
+        add(format!("{p}attn.proj.weight"), &[H, H], 0.0, 0.4);
+        add(format!("{p}attn.proj.bias"), &[H], 0.0, 0.2);
+        add(format!("{p}mlp.fc1.weight"), &[MLP, H], 0.0, 0.3);
+        add(format!("{p}mlp.fc1.bias"), &[MLP], 0.0, 0.2);
+        add(format!("{p}mlp.fc2.weight"), &[H, MLP], 0.0, 0.3);
+        add(format!("{p}mlp.fc2.bias"), &[H], 0.0, 0.2);
+        add(format!("{p}ls1"), &[H], 0.5, 0.2);
+        add(format!("{p}ls2"), &[H], 0.5, 0.2);
+    }
+    let unfolded = H * MERGE * MERGE;
+    add("mlp1.0.weight".into(), &[unfolded], 1.0, 0.2);
+    add("mlp1.0.bias".into(), &[unfolded], 0.0, 0.2);
+    add("mlp1.1.weight".into(), &[HIDDEN, unfolded], 0.0, 0.4);
+    add("mlp1.1.bias".into(), &[HIDDEN], 0.0, 0.2);
+    add("mlp1.3.weight".into(), &[HIDDEN, HIDDEN], 0.0, 0.4);
+    add("mlp1.3.bias".into(), &[HIDDEN], 0.0, 0.2);
+
+    let arch = write_gqa_checkpoint(dir, arch, model_id, 0.01, tensors)?;
+    std::fs::write(dir.join("tokenizer.json"), tokenizer.to_string())?;
+    std::fs::write(
+        dir.join("tokenizer_config.json"),
+        r#"{"eos_token":"<|im_end|>","pad_token":"<|endoftext|>"}"#,
+    )?;
+    std::fs::write(
+        dir.join("chat_template.jinja"),
+        "{% for message in messages %}{{ '<|im_start|>' + message.role + '\\n' + \
+         message.content + '<|im_end|>\\n' }}{% endfor %}{% if add_generation_prompt %}\
+         {{ '<|im_start|>assistant\\n' }}{% endif %}",
+    )?;
+    std::fs::write(
+        dir.join("preprocessor_config.json"),
+        format!(r#"{{"size":{}}}"#, SIDE * PATCH),
+    )?;
+    Ok(arch)
+}
+
 /// The shared body. `num_experts == 0` writes the dense FFN and omits the
 /// router; anything above writes the router and the routed experts.
 fn build_gqa_install(

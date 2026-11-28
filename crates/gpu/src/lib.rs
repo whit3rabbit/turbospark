@@ -546,10 +546,10 @@ pub use vision::{
     encode_vision_gelu, encode_vision_im2col, encode_vision_layer_norm, encode_vision_matmul,
     encode_vision_matmul_with, encode_vision_mul, encode_vision_quick_gelu,
     encode_vision_residual_add, encode_vision_residual_scaled_add, encode_vision_rms_norm,
-    encode_vision_rope_2d, encode_vision_rope_axial, encode_vision_sam_attention,
-    encode_vision_silu, encode_vision_window_mean4_add, GeluKind, VisionAttentionKernel,
-    VisionConvShape, VisionMatmulKernel, MAX_ATTENTION_HEAD_DIM, SAM_ATTENTION_HEAD_DIM,
-    SAM_ATTENTION_MAX_KEYS, VISION_GATHER_ZERO,
+    encode_vision_rope_2d, encode_vision_rope_axial, encode_vision_rope_interleaved,
+    encode_vision_sam_attention, encode_vision_silu, encode_vision_window_mean4_add, GeluKind,
+    VisionAttentionKernel, VisionConvShape, VisionMatmulKernel, MAX_ATTENTION_HEAD_DIM,
+    SAM_ATTENTION_HEAD_DIM, SAM_ATTENTION_MAX_KEYS, VISION_GATHER_ZERO,
 };
 #[cfg(target_os = "macos")]
 pub use whisper_conv::{encode_whisper_conv1d3_gelu, whisper_conv1d3_gelu};

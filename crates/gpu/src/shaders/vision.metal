@@ -904,6 +904,40 @@ void vision_rope_axial_fp16(
 }
 
 // ----------------------------------------------------------------------------
+// Mage-ViT's rope. The pairs are ADJACENT lanes (2i, 2i + 1), and lane `l`
+// takes angle `l % (head_dim / 2)`, so the two lanes of a pair turn by
+// DIFFERENT angles. That is the checkpoint's trained behaviour, not a slip:
+// `out = x * cos + (-x1, x0, -x3, x2, ...) * sin`. `freqs` is
+// `[seq, head_dim / 2]` F32. One thread per (pair, head, token).
+// ----------------------------------------------------------------------------
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void vision_rope_interleaved_fp16(
+    device half*        qk        [[buffer(0)]],
+    device const float* freqs     [[buffer(1)]],
+    constant uint&      seq       [[buffer(2)]],
+    constant uint&      heads     [[buffer(3)]],
+    constant uint&      head_dim  [[buffer(4)]],
+    uint3               gid       [[thread_position_in_grid]]
+) {
+    const uint pair = gid.x;          // 0 .. head_dim/2
+    const uint head = gid.y;
+    const uint token = gid.z;
+    const uint half_dim = head_dim / 2;
+    if (pair >= half_dim || head >= heads || token >= seq) return;
+
+    const uint lane = 2 * pair;
+    device const float* angles = freqs + uint64_t(token) * half_dim;
+    const float angle_a = angles[lane % half_dim];
+    const float angle_b = angles[(lane + 1) % half_dim];
+
+    device half* row = qk + (uint64_t(token) * heads + head) * head_dim;
+    const float a = float(row[lane]);
+    const float b = float(row[lane + 1]);
+    row[lane]     = half(a * cos(angle_a) - b * sin(angle_a));
+    row[lane + 1] = half(b * cos(angle_b) + a * sin(angle_b));
+}
+
+// ----------------------------------------------------------------------------
 // `y[g, c] += mean over k < 4 of x[4 * g + k, c]`, FP32 intermediate: the
 // MiniCPM-V window merger's residual (`merged + mean(windows, axis=1)`), where
 // `x` holds the windows' four tokens as consecutive rows and `y` one merged

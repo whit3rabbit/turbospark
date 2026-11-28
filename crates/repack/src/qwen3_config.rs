@@ -37,20 +37,32 @@ pub fn parse_qwen3_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
         serde_json::from_str(json).map_err(|e| Gemma4Error::Config(e.to_string()))?;
     crate::arch_registry::refuse_foreign_config(&root, ModelFamily::Qwen3Dense)
         .map_err(Gemma4Error::Config)?;
-    // Plain `qwen3` is flat. ONE wrapper is accepted beside it: the `internvl`
-    // wrapper (`mlx-community/InternVL3_5-1B-4bit` @ f9d179a8), whose trunk
-    // fields sit inside a plain-qwen3 `text_config` exactly as they would at
-    // the root. Any other wrapper means a config whose own model_type the
-    // registry did not resolve, which is not a trunk to parse as Qwen.
-    let internvl_wrapper = root.get("model_type").and_then(serde_json::Value::as_str)
-        == Some(crate::gemma4_checkpoint::INTERNVL_MODEL_TYPE);
+    // Plain `qwen3` is flat. Two wrappers are accepted beside it, `internvl`
+    // (`mlx-community/InternVL3_5-1B-4bit` @ f9d179a8) and `mage_vl`
+    // (`mlx-community/Mage-VL-8bit` @ 40dc28d8), whose trunk fields sit inside
+    // a plain-qwen3 `text_config` exactly as they would at the root. Any other
+    // wrapper is not a trunk to parse as Qwen.
+    let root_type = root.get("model_type").and_then(serde_json::Value::as_str);
+    let internvl_wrapper = root_type == Some(crate::gemma4_checkpoint::INTERNVL_MODEL_TYPE);
+    let mage_wrapper = root_type == Some(crate::gemma4_checkpoint::MAGE_VL_MODEL_TYPE);
+    // The publisher's BF16 repository spells the tensors `model.language_model.*`
+    // and `model.visual.*`, which nothing here reads.
+    if mage_wrapper && root.get("quantization").is_none_or(|q| !q.is_object()) {
+        return Err(Gemma4Error::Config(
+            "mage_vl installs from an MLX affine conversion only (a config.json with a \
+             quantization block); the publisher's unquantized layout is not wired"
+                .into(),
+        ));
+    }
     let tc = match root.get("text_config") {
         None => &root,
-        Some(tc) if internvl_wrapper => tc,
+        Some(tc) if internvl_wrapper || mage_wrapper => tc,
         Some(_) => {
             return Err(Gemma4Error::Config(
                 "a qwen3 config carries no text_config wrapper; this is not plain dense qwen3 \
-                 (the one accepted wrapper is model_type internvl)"
+                 (the accepted wrappers are model_type internvl and mage_vl; the \
+                 llava_onevision2 layout of Mage-VL-Cowork is not wired, use its MLX \
+                 conversion)"
                     .into(),
             ))
         }
@@ -105,7 +117,22 @@ pub fn parse_qwen3_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
             "qwen3 requires rms_norm_eps 1e-6, got {rms_norm_eps}"
         )));
     }
-    let rope_theta = f("rope_theta")?;
+    // transformers 5.x conversions nest the rope under `rope_parameters`.
+    let nested_rope = tc.get("rope_parameters").filter(|_| mage_wrapper);
+    if let Some(kind) = nested_rope
+        .and_then(|r| r.get("rope_type"))
+        .and_then(serde_json::Value::as_str)
+    {
+        if kind != "default" {
+            return Err(Gemma4Error::Config(format!(
+                "qwen3 rope_parameters rope_type {kind:?} is not wired; only plain RoPE is"
+            )));
+        }
+    }
+    let rope_theta = match nested_rope.and_then(|r| r.get("rope_theta")?.as_f64()) {
+        Some(theta) => theta,
+        None => f("rope_theta")?,
+    };
     if !rope_theta.is_finite() || rope_theta <= 0.0 {
         return Err(Gemma4Error::Config(format!(
             "rope_theta must be finite and positive, got {rope_theta}"

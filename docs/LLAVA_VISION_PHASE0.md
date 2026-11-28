@@ -309,7 +309,7 @@ reads; `scripts/llava_reference_generate.py` is the reference's greedy answer.
 - **One image per prompt is the reference's limit** (`llava.py` refuses more);
   the port expands any count but only one has been run.
 - **LLaVA-1.6 / NeXT** (anyres tiling, image-newline tokens) is a different
-  pipeline and is not attempted.
+  pipeline: [LLAVA_NEXT_VISION_PHASE0.md](LLAVA_NEXT_VISION_PHASE0.md).
 
 ## Pixtral and Mistral3 (assessed, not implemented)
 

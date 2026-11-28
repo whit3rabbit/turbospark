@@ -134,6 +134,15 @@ patches, 1,702 merged tokens.
 | `gpu` | `vision_silu_fp16`; `rope_mrope_chunked` |
 | `runtime` | `vision::qwen25::Qwen25VisionTower` (host window permutation, per-window attention dispatch), routed from `encode_image`, so `set_prompt_vision` and every front end are unchanged; the llama flow's one mRoPE dispatch site |
 
+## Vision pixel budget
+
+The same memory clamp as the other towers, with this tower's own scratch
+formula; the computed sizes and limits are in
+[QWEN2VL_VISION_PHASE0.md](QWEN2VL_VISION_PHASE0.md#vision-pixel-budget). It
+bounds memory only. The four full-attention blocks still do work that grows
+with the square of the patch count, which nothing caps and no near-ceiling page
+has measured.
+
 ## Gates
 
 ### Tower against the numpy transcription (3B tower, sidecar)

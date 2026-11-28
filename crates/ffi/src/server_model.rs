@@ -298,6 +298,11 @@ impl FfiChatModel {
                     .set_prompt_vision_flat(&rows, spans, prompt_ids.len())
                     .map_err(|e| RuntimeError::Producer(e.to_string()))?;
             }
+            turbospark_server::vision::RequestImages::InternVl { images, spans } => {
+                runner
+                    .set_prompt_internvl(images, spans, prompt_ids.len())
+                    .map_err(|e| RuntimeError::Producer(e.to_string()))?;
+            }
             turbospark_server::vision::RequestImages::DeepseekOcr { images, spans } => {
                 let mut rows = Vec::with_capacity(images.len());
                 for (i, image) in images.iter().enumerate() {
@@ -422,6 +427,11 @@ impl ChatModel for FfiChatModel {
             if runner.inkling2_image_ids().is_some() {
                 return Some(turbospark_server::vision::VisionInfo::Inkling2 {
                     max_tokens: turbospark_vision_io::INKLING2_MAX_TOKENS,
+                });
+            }
+            if runner.internvl_image_ids().is_some() {
+                return Some(turbospark_server::vision::VisionInfo::InternVl {
+                    layout: crate::vision::internvl_layout(runner, &self.core.tokenizer).ok()?,
                 });
             }
             if let Some((marker, fill)) = runner.deepseek_ocr_image_ids() {

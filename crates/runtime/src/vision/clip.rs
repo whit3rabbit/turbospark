@@ -1,4 +1,11 @@
-//! The CLIP vision tower LLaVA-1.5 carries (`docs/LLAVA_VISION_PHASE0.md`).
+//! The CLIP vision tower LLaVA-1.5 carries (`docs/LLAVA_VISION_PHASE0.md`),
+//! and LLaVA 1.6's use of it (`docs/LLAVA_NEXT_VISION_PHASE0.md`).
+//!
+//! LLaVA 1.6 ([`VisionTowerKind::ClipNext`]) runs the same pass once per
+//! anyres tile (the base tile, then the grid row-major) and packs the rows on
+//! the host with the learned `image_newline`
+//! ([`turbospark_vision_io::llava_next_pack_features`]). The GPU buffers are
+//! per tile, so they are sized as for 1.5.
 //!
 //! A sibling of the qwen tower ([`super::VisionTower`]) and of Gemma 4's
 //! ([`super::gemma4`]), not a variant of either: the qwen tower's host prep is
@@ -77,10 +84,16 @@ struct ClipResident {
     proj1_b: u64,
     proj2_w: u64,
     proj2_b: u64,
+    /// `image_newline`, present for the LLaVA 1.6 kind only.
+    newline: Option<u64>,
 }
 
 impl ClipResident {
-    fn resolve(index: &ResidentIndex, shape: &VisionShape) -> Result<Self, RealForwardError> {
+    fn resolve(
+        index: &ResidentIndex,
+        shape: &VisionShape,
+        next: bool,
+    ) -> Result<Self, RealForwardError> {
         let h = shape.hidden;
         let o = shape.out_hidden;
         let name = |tail: &str| format!("{VISION_PREFIX}{tail}");
@@ -94,6 +107,9 @@ impl ClipResident {
             proj1_b: fp16_view(index, &name("projector.linear_1.bias"), o)?,
             proj2_w: fp16_view(index, &name("projector.linear_2.weight"), o * o)?,
             proj2_b: fp16_view(index, &name("projector.linear_2.bias"), o)?,
+            newline: next
+                .then(|| fp16_view(index, &name("image_newline"), o))
+                .transpose()?,
         })
     }
 }
@@ -103,7 +119,11 @@ impl ClipResident {
 /// `pos_side` is the PATCH grid's side (the class row is `pos_rows - 1`).
 fn clip_shape(vision: &VisionConfig) -> Result<VisionShape, RealForwardError> {
     let bad = |detail: String| RealForwardError::Unsupported(detail);
-    if vision.tower != VisionTowerKind::Clip || !vision.is_active() {
+    if !matches!(
+        vision.tower,
+        VisionTowerKind::Clip | VisionTowerKind::ClipNext
+    ) || !vision.is_active()
+    {
         return Err(bad("this install declares no CLIP vision tower".to_string()));
     }
     let u = |v: i64| usize::try_from(v).unwrap_or(0);
@@ -189,6 +209,9 @@ pub(crate) struct ClipVisionTower {
     /// into row 0 of the residual stream from the host, since no kernel
     /// scatters one row.
     class_row: Vec<u8>,
+    /// `image_newline`, FP16 bits, `Some` for the LLaVA 1.6 kind. Its
+    /// presence is what makes [`Self::run`] take anyres tiles.
+    newline: Option<Vec<u16>>,
     /// The sidecar's own resident weights, `Some` when the tower was opened
     /// against a standalone sidecar rather than the trunk's install.
     sidecar_weights: Option<gpu::ResidentGpuWeights>,
@@ -315,7 +338,15 @@ impl ClipVisionTower {
             );
         }
 
-        let resident = ClipResident::resolve(index, &shape)?;
+        let next = arch.vision.tower == VisionTowerKind::ClipNext;
+        if next && shape.pos_side != turbospark_vision_io::NEXT_SIDE {
+            return Err(RealForwardError::Unsupported(format!(
+                "a LLaVA 1.6 tower needs a {0}x{0} patch grid, not {1}x{1}",
+                turbospark_vision_io::NEXT_SIDE,
+                shape.pos_side
+            )));
+        }
+        let resident = ClipResident::resolve(index, &shape, next)?;
         let at = resident.class_embedding as usize;
         let class_row = weights
             .data()
@@ -326,6 +357,25 @@ impl ClipVisionTower {
                 )
             })?
             .to_vec();
+        let newline = resident
+            .newline
+            .map(|at| {
+                let at = at as usize;
+                weights
+                    .data()
+                    .get(at..at + shape.out_hidden * 2)
+                    .map(|b| {
+                        b.chunks_exact(2)
+                            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                            .collect::<Vec<u16>>()
+                    })
+                    .ok_or_else(|| {
+                        RealForwardError::Unsupported(
+                            "image_newline spans past the mapped region".to_string(),
+                        )
+                    })
+            })
+            .transpose()?;
         Ok(Self {
             slot_buffers,
             streamer,
@@ -333,6 +383,7 @@ impl ClipVisionTower {
             resident,
             shape,
             class_row,
+            newline,
             sidecar_weights: None,
         })
     }
@@ -343,7 +394,9 @@ impl ClipVisionTower {
         self.sidecar_weights.is_some()
     }
 
-    /// Encode one image to `[patches, out_hidden]` FP16 bits.
+    /// Encode one image to `[image tokens, out_hidden]` FP16 bits: the patch
+    /// rows for LLaVA-1.5, the packed anyres run for LLaVA 1.6. Stages are the
+    /// first tile's.
     pub(crate) fn run(
         &mut self,
         context: &mut gpu::MetalContext,
@@ -351,30 +404,89 @@ impl ClipVisionTower {
         patches: &turbospark_vision_io::ClipPatches,
         want_stages: bool,
     ) -> Result<(Vec<u16>, Option<ClipStages>), RealForwardError> {
+        let refuse = |detail: String| Err(RealForwardError::Unsupported(detail));
+        let n = self.shape.pos_rows - 1;
+        let patch_dim = self.shape.patch_dim;
+        // The two preprocessing layouts share the patch edge and the table
+        // size, so the anyres record is what tells them apart here.
+        let Some(newline) = self.newline.clone() else {
+            if patches.anyres.is_some() {
+                return refuse(
+                    "anyres patches given to a LLaVA-1.5 tower; the preprocessor config \
+                     beside this tower is for another checkpoint"
+                        .to_string(),
+                );
+            }
+            let got = patches.num_patches();
+            if got != n {
+                return refuse(format!(
+                    "the image has {got} patches but this tower's position table covers {n}; \
+                     CLIP does not interpolate, and the processor always crops to one size"
+                ));
+            }
+            if patches.pixels.len() != n * patch_dim {
+                return refuse(format!(
+                    "the image's patch rows are {}-wide but this tower's patch embedding takes \
+                     {patch_dim}",
+                    patches.pixels.len() / n.max(1)
+                ));
+            }
+            return self.encode_tile(context, weights, &patches.pixels, want_stages);
+        };
+        let Some(anyres) = patches.anyres else {
+            return refuse(
+                "a LLaVA 1.6 tower needs anyres patches (a base tile and a grid); the \
+                 preprocessor config beside this tower is for another checkpoint"
+                    .to_string(),
+            );
+        };
+        let tiles = 1 + anyres.tiles_h * anyres.tiles_w;
+        if patches.pixels.len() != tiles * n * patch_dim {
+            return refuse(format!(
+                "{} patch values for {tiles} tiles of {n} patches of {patch_dim}",
+                patches.pixels.len()
+            ));
+        }
+        let mut rows = Vec::with_capacity(tiles * n * self.shape.out_hidden);
+        let mut stages = None;
+        for (i, tile) in patches.pixels.chunks_exact(n * patch_dim).enumerate() {
+            let (out, st) = self.encode_tile(context, weights, tile, want_stages && i == 0)?;
+            rows.extend(out);
+            stages = stages.or(st);
+        }
+        let packed = turbospark_vision_io::llava_next_pack_features(
+            &rows,
+            self.shape.out_hidden,
+            &newline,
+            &anyres,
+        )
+        .map_err(|e| RealForwardError::Unsupported(format!("packing the image rows: {e}")))?;
+        // The prompt holds `num_patches()` placeholders; rows that disagree
+        // would shift every text token after the image.
+        if packed.len() != patches.num_patches() * self.shape.out_hidden {
+            return refuse(format!(
+                "{} packed rows for {} image placeholders",
+                packed.len() / self.shape.out_hidden,
+                patches.num_patches()
+            ));
+        }
+        Ok((packed, stages))
+    }
+
+    /// One `pos_rows - 1`-patch tile through the tower and the projector.
+    fn encode_tile(
+        &mut self,
+        context: &mut gpu::MetalContext,
+        weights: &gpu::ResidentGpuWeights,
+        pixels: &[f32],
+        want_stages: bool,
+    ) -> Result<(Vec<u16>, Option<ClipStages>), RealForwardError> {
         let s = &self.shape;
-        let n = patches.num_patches();
-        if n != s.pos_rows - 1 {
-            return Err(RealForwardError::Unsupported(format!(
-                "the image has {n} patches but this tower's position table covers {}; CLIP \
-                 does not interpolate, and the processor always crops to one size",
-                s.pos_rows - 1
-            )));
-        }
-        if patches.pixels.len() != n * s.patch_dim {
-            return Err(RealForwardError::Unsupported(format!(
-                "the image's patch rows are {}-wide but this tower's patch embedding takes {}",
-                patches.pixels.len() / n.max(1),
-                s.patch_dim
-            )));
-        }
+        let n = s.pos_rows - 1;
         let tokens = n + 1;
         let hidden = s.hidden;
         let wide = tokens * hidden;
-        let rows: Vec<half::f16> = patches
-            .pixels
-            .iter()
-            .map(|&v| half::f16::from_f32(v))
-            .collect();
+        let rows: Vec<half::f16> = pixels.iter().map(|&v| half::f16::from_f32(v)).collect();
         let w = self.sidecar_weights.as_ref().unwrap_or(weights);
         let gpu_err = RealForwardError::Gpu;
         let bytes = |elems: usize| (elems * 2) as u64;

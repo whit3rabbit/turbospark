@@ -36,8 +36,10 @@
 //! produces at the ceiling, never over-count them, so a budget solved
 //! against it is always safe to hand to `smart_resize` as `max_pixels`.
 
-use model_io::LoadGuard;
+use model_io::{LoadGuard, VisionConfig, VisionTowerKind};
 
+use crate::vision::qwen2::{self, Qwen2Dims, QWEN2_MLP_TILE_ROWS};
+use crate::vision::qwen25::{self, Qwen25Dims, QWEN25_MLP_TILE_ROWS};
 use crate::vision::shape::VisionShape;
 
 /// Scratch bytes a page of `pixels` raw pixels would cost, at this tower's
@@ -49,14 +51,15 @@ use crate::vision::shape::VisionShape;
 /// the two must never independently drift about what a page of `N` patches
 /// costs.
 pub(crate) fn scratch_bytes_for_pixels(shape: &VisionShape, pixels: usize, tile: usize) -> u64 {
-    crate::vision::scratch::scratch_bytes(shape, patches_for_pixel_ceiling(shape, pixels), tile)
+    let patches = patches_for_pixel_ceiling(shape.patch_size, shape.merge, pixels);
+    crate::vision::scratch::scratch_bytes(shape, patches, tile)
 }
 
 /// The largest patch count any real `smart_resize` output could reach under
 /// a `pixels` ceiling. See the module doc for why this is an exact
 /// conservative bound rather than a division-based approximation.
-fn patches_for_pixel_ceiling(shape: &VisionShape, pixels: usize) -> usize {
-    let spatial_factor = shape.patch_size * shape.merge;
+fn patches_for_pixel_ceiling(patch_size: usize, merge: usize, pixels: usize) -> usize {
+    let spatial_factor = patch_size * merge;
     let factor_sq = spatial_factor * spatial_factor;
     if factor_sq == 0 {
         // `VisionShape::resolve` already refuses a zero `patch_size` or
@@ -65,7 +68,7 @@ fn patches_for_pixel_ceiling(shape: &VisionShape, pixels: usize) -> usize {
         return 0;
     }
     let rounded_pixels = (pixels / factor_sq) * factor_sq;
-    rounded_pixels / (shape.patch_size * shape.patch_size)
+    rounded_pixels / (patch_size * patch_size)
 }
 
 /// The result of resolving a checkpoint's declared `max_pixels` against a
@@ -180,6 +183,29 @@ pub(crate) fn resolve_max_pixels(
     committed: u64,
     kv_bytes: u64,
 ) -> Result<PixelBudget, VisionBudgetTooSmall> {
+    solve_max_pixels(
+        declared_max_pixels,
+        min_pixels,
+        |pixels| scratch_bytes_for_pixels(shape, pixels, tile),
+        guard,
+        physical,
+        committed,
+        kv_bytes,
+    )
+}
+
+/// The search itself, over any tower's `pixels -> scratch bytes`, which must be
+/// non-decreasing.
+#[allow(clippy::too_many_arguments)]
+fn solve_max_pixels(
+    declared_max_pixels: usize,
+    min_pixels: usize,
+    scratch_for: impl Fn(usize) -> u64,
+    guard: LoadGuard,
+    physical: u64,
+    committed: u64,
+    kv_bytes: u64,
+) -> Result<PixelBudget, VisionBudgetTooSmall> {
     if matches!(guard, LoadGuard::Off) {
         return Ok(PixelBudget {
             resolved_max_pixels: declared_max_pixels,
@@ -190,14 +216,14 @@ pub(crate) fn resolve_max_pixels(
     let spoken_for = committed.saturating_add(kv_bytes);
     let available = guard.available(physical, spoken_for);
 
-    if scratch_bytes_for_pixels(shape, declared_max_pixels, tile) <= available {
+    if scratch_for(declared_max_pixels) <= available {
         return Ok(PixelBudget {
             resolved_max_pixels: declared_max_pixels,
             clamped: false,
         });
     }
 
-    let needs_at_min = scratch_bytes_for_pixels(shape, min_pixels, tile);
+    let needs_at_min = scratch_for(min_pixels);
     if needs_at_min > available {
         return Err(VisionBudgetTooSmall {
             declared_max_pixels,
@@ -216,7 +242,7 @@ pub(crate) fn resolve_max_pixels(
     let (mut lo, mut hi) = (min_pixels, declared_max_pixels);
     while hi - lo > 1 {
         let mid = lo + (hi - lo) / 2;
-        if scratch_bytes_for_pixels(shape, mid, tile) <= available {
+        if scratch_for(mid) <= available {
             lo = mid;
         } else {
             hi = mid;
@@ -226,6 +252,69 @@ pub(crate) fn resolve_max_pixels(
         resolved_max_pixels: lo,
         clamped: true,
     })
+}
+
+/// Resolve the ceiling for whichever tower `vision` declares.
+///
+/// The Qwen2-VL and Qwen2.5-VL towers have no position table, so no
+/// [`VisionShape`] exists for them; each brings its own geometry, scratch
+/// formula and fixed MLP tile (`mlp_tile_rows` is the qwen3 tower's only).
+#[allow(clippy::too_many_arguments)]
+fn max_pixels_for_tower(
+    vision: &VisionConfig,
+    mlp_tile_rows: usize,
+    declared_max_pixels: usize,
+    min_pixels: usize,
+    guard: LoadGuard,
+    physical: u64,
+    committed: u64,
+    kv_bytes: u64,
+) -> Result<PixelBudget, VisionBudgetTooSmall> {
+    let solve = |scratch_for: &dyn Fn(usize) -> u64| {
+        solve_max_pixels(
+            declared_max_pixels,
+            min_pixels,
+            scratch_for,
+            guard,
+            physical,
+            committed,
+            kv_bytes,
+        )
+    };
+    let unclamped = Ok(PixelBudget {
+        resolved_max_pixels: declared_max_pixels,
+        clamped: false,
+    });
+    match vision.tower {
+        // Mage-ViT allocates the same scratch.
+        VisionTowerKind::Qwen2Vl | VisionTowerKind::MageVit => match Qwen2Dims::resolve(vision) {
+            Ok(d) => solve(&|pixels| {
+                let seq = patches_for_pixel_ceiling(d.patch_size, d.merge, pixels);
+                qwen2::scratch_bytes(&d, seq, QWEN2_MLP_TILE_ROWS)
+            }),
+            Err(_) => unclamped,
+        },
+        VisionTowerKind::Qwen25Vl => match Qwen25Dims::resolve(vision) {
+            Ok(d) => solve(&|pixels| {
+                let seq = patches_for_pixel_ceiling(d.patch_size, d.merge, pixels);
+                qwen25::scratch_bytes(&d, seq, QWEN25_MLP_TILE_ROWS)
+            }),
+            Err(_) => unclamped,
+        },
+        _ => match VisionShape::resolve(vision) {
+            Ok(shape) => resolve_max_pixels(
+                declared_max_pixels,
+                min_pixels,
+                &shape,
+                mlp_tile_rows,
+                guard,
+                physical,
+                committed,
+                kv_bytes,
+            ),
+            Err(_) => unclamped,
+        },
+    }
 }
 
 /// The entry point every front end calls, over the public
@@ -245,15 +334,15 @@ impl crate::real_forward::RealForwardRunner {
     /// different one (`crates/ffi/CLAUDE.md` Gotcha 12's rule, applied to a
     /// third call).
     ///
-    /// The MLP tile is this session's OWN tower's, if one has already opened
+    /// For the qwen3 path the MLP tile is this session's OWN tower's, if one has already opened
     /// (a test may have overridden it via `set_vision_mlp_tile_rows`), or
     /// the shipped default otherwise -- the tower opens lazily on the first
     /// image, so a caller resolving this before that point cannot ask the
     /// tower directly.
     ///
-    /// A `VisionConfig` that cannot resolve to a [`VisionShape`] (structurally
-    /// invalid: a zero field, a `hidden_size` not divisible by `num_heads`,
-    /// ...) cannot be budgeted against a formula that needs one. Rather than
+    /// A `VisionConfig` that cannot resolve to its tower's geometry
+    /// (structurally invalid: a zero field, a `hidden_size` not divisible by
+    /// `num_heads`, ...) cannot be budgeted against a formula that needs one. Rather than
     /// inventing a bound, this declines to clamp: the SAME install fails the
     /// same way, with the same message, the moment `open_vision_tower`
     /// actually tries to build the tower for a real image, so deferring to
@@ -272,22 +361,16 @@ impl crate::real_forward::RealForwardRunner {
             .as_ref()
             .map(|v| v.mlp_tile_rows)
             .unwrap_or(crate::vision::scratch::VISION_MLP_TILE_ROWS);
-        match VisionShape::resolve(&self.arch.vision) {
-            Ok(shape) => resolve_max_pixels(
-                declared_max_pixels,
-                min_pixels,
-                &shape,
-                tile,
-                guard,
-                physical,
-                committed,
-                kv_bytes,
-            ),
-            Err(_) => Ok(PixelBudget {
-                resolved_max_pixels: declared_max_pixels,
-                clamped: false,
-            }),
-        }
+        max_pixels_for_tower(
+            &self.arch.vision,
+            tile,
+            declared_max_pixels,
+            min_pixels,
+            guard,
+            physical,
+            committed,
+            kv_bytes,
+        )
     }
 }
 
@@ -519,5 +602,134 @@ mod tests {
             "the machine-size test must be sensitive to the tile term: dropping it moved \
              nothing, which means the test cannot see a broken formula"
         );
+    }
+
+    /// The published `Qwen2-VL-2B` and `Qwen2.5-VL-3B` towers.
+    fn qwen2_config(tower: VisionTowerKind) -> VisionConfig {
+        let (intermediate_size, out_hidden_size) = match tower {
+            VisionTowerKind::Qwen2Vl => (5120, 1536),
+            _ => (3420, 2048),
+        };
+        VisionConfig {
+            depth: 32,
+            hidden_size: 1280,
+            intermediate_size,
+            num_heads: 16,
+            patch_size: 14,
+            temporal_patch_size: 2,
+            in_channels: 3,
+            spatial_merge_size: 2,
+            num_position_embeddings: 0,
+            out_hidden_size,
+            mrope_section: [16, 24, 24],
+            deepstack_visual_indexes: Vec::new(),
+            vision_start_token_id: 151652,
+            vision_end_token_id: 151653,
+            image_token_id: 151655,
+            video_token_id: 151656,
+            tower,
+        }
+    }
+
+    const QWEN2_MIN_PIXELS: usize = 3_136;
+    const QWEN2_MAX_PIXELS: usize = 12_845_056;
+    /// Scratch for the declared ceiling (65,536 patches), summed by hand from
+    /// the buffer list in `qwen2.rs` / `qwen25.rs`.
+    const QWEN2_CEILING_BYTES: u64 = 1_567_621_120;
+    const QWEN25_CEILING_BYTES: u64 = 1_587_920_896;
+
+    fn qwen_budget(
+        tower: VisionTowerKind,
+        guard: LoadGuard,
+        physical: u64,
+        committed: u64,
+        kv_bytes: u64,
+    ) -> Result<PixelBudget, VisionBudgetTooSmall> {
+        max_pixels_for_tower(
+            &qwen2_config(tower),
+            VISION_MLP_TILE_ROWS,
+            QWEN2_MAX_PIXELS,
+            QWEN2_MIN_PIXELS,
+            guard,
+            physical,
+            committed,
+            kv_bytes,
+        )
+    }
+
+    /// Towers with no position table are budgeted too: the ceiling stands
+    /// exactly while its scratch fits, and one byte less clamps it.
+    #[test]
+    fn the_qwen2_towers_clamp_one_byte_past_the_fit() {
+        for (tower, ceiling) in [
+            (VisionTowerKind::Qwen2Vl, QWEN2_CEILING_BYTES),
+            (VisionTowerKind::Qwen25Vl, QWEN25_CEILING_BYTES),
+        ] {
+            let reserve = LoadGuard::Relaxed.budget().reserve_bytes;
+            let fits = reserve + ceiling;
+            let at = qwen_budget(tower, LoadGuard::Relaxed, fits, 0, 0).expect("fits");
+            assert_eq!(at.resolved_max_pixels, QWEN2_MAX_PIXELS, "{tower:?}");
+            assert!(!at.clamped);
+
+            let under = qwen_budget(tower, LoadGuard::Relaxed, fits - 1, 0, 0).expect("clamps");
+            assert!(under.clamped, "{tower:?}");
+            // Only the last merged token's worth of pixels has to go.
+            assert_eq!(under.resolved_max_pixels, QWEN2_MAX_PIXELS - 1, "{tower:?}");
+
+            // Weights and KV cache both count against the same room.
+            for (committed, kv) in [(GIB, 0), (0, GIB)] {
+                let b =
+                    qwen_budget(tower, LoadGuard::Relaxed, fits, committed, kv).expect("clamps");
+                assert!(b.clamped && b.resolved_max_pixels < QWEN2_MAX_PIXELS / 2);
+            }
+        }
+    }
+
+    #[test]
+    fn the_qwen2_towers_are_unclamped_on_16_and_36_gib() {
+        for tower in [VisionTowerKind::Qwen2Vl, VisionTowerKind::Qwen25Vl] {
+            for physical in [16 * GIB, 36 * GIB] {
+                let b =
+                    qwen_budget(tower, LoadGuard::Relaxed, physical, 2 * GIB, GIB).expect("fits");
+                assert_eq!(b.resolved_max_pixels, QWEN2_MAX_PIXELS);
+                assert!(!b.clamped);
+            }
+        }
+    }
+
+    #[test]
+    fn the_qwen2_towers_refuse_below_the_floor_and_off_skips_it() {
+        for tower in [VisionTowerKind::Qwen2Vl, VisionTowerKind::Qwen25Vl] {
+            let err = qwen_budget(tower, LoadGuard::Relaxed, 4 * GIB, 0, 0)
+                .expect_err("nothing is left after the reserve");
+            assert_eq!(err.min_pixels, QWEN2_MIN_PIXELS);
+            assert!(err.needs > 0);
+            let off = qwen_budget(tower, LoadGuard::Off, GIB, 0, 0).expect("off");
+            assert!(!off.clamped);
+        }
+    }
+
+    /// Mage-ViT shares the Qwen2-VL scratch, so it must reach the same solver
+    /// rather than the position-table formula, which declines to clamp it.
+    #[test]
+    fn the_mage_vit_tower_is_budgeted() {
+        let mut vision = qwen2_config(VisionTowerKind::MageVit);
+        vision.hidden_size = 1024;
+        vision.patch_size = 16;
+        vision.temporal_patch_size = 1;
+        let solve = |physical| {
+            max_pixels_for_tower(
+                &vision,
+                VISION_MLP_TILE_ROWS,
+                4_000_000,
+                QWEN2_MIN_PIXELS,
+                LoadGuard::Relaxed,
+                physical,
+                0,
+                0,
+            )
+        };
+        assert!(solve(4 * GIB).is_err());
+        assert!(!solve(36 * GIB).expect("fits").clamped);
     }
 }

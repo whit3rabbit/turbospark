@@ -27,10 +27,12 @@ mod vision;
 mod vision_clip;
 mod vision_deepseek_ocr;
 mod vision_gemma4;
+mod vision_gemma4_unified;
 mod vision_idefics3;
 mod vision_inkling2;
 mod vision_internvl;
 mod vision_lfm3;
+mod vision_mage;
 mod vision_minicpm;
 mod vision_muse;
 mod vision_onevision;
@@ -40,8 +42,8 @@ mod vision_siglip;
 pub use classify::{
     canonicalize_deepseek_vl2_header, canonicalize_flint_header, canonicalize_idefics3_header,
     canonicalize_internvl_header, canonicalize_qwen2_header, canonicalize_vision_header,
-    classify_for_family, classify_gemma4, Gemma4Bucket, DFLASH_PREFIX, MTP_PREFIX,
-    VISION_INSTALL_PREFIX, VISION_PREFIX, VISION_SOURCE_PREFIXES,
+    classify_for_family, classify_gemma4, drop_gemma4_unified_audio, Gemma4Bucket, DFLASH_PREFIX,
+    MTP_PREFIX, VISION_INSTALL_PREFIX, VISION_PREFIX, VISION_SOURCE_PREFIXES,
 };
 pub(crate) use config::parse_quantization_admitting;
 pub use config::{
@@ -76,8 +78,10 @@ pub use vision::{
     RESIDENT_TENSORS as VISION_RESIDENT_TENSORS,
 };
 pub use vision_clip::{
-    parse_llava_vision_config, read_clip_vision_entries, CLIP_MODEL_PREFIX, CLIP_PROJECTOR_PREFIX,
-    CLIP_RESIDENT_TENSORS, CLIP_SOURCE_PREFIXES, LLAVA_MODEL_TYPE,
+    parse_llava_next_vision_config, parse_llava_vision_config, read_clip_vision_entries,
+    CLIP_MODEL_PREFIX, CLIP_NEXT_NEWLINE, CLIP_NEXT_NEWLINE_RESIDENT, CLIP_NEXT_SOURCE_PREFIXES,
+    CLIP_PROJECTOR_PREFIX, CLIP_RESIDENT_TENSORS, CLIP_SOURCE_PREFIXES, LLAVA_MODEL_TYPE,
+    LLAVA_NEXT_MODEL_TYPE,
 };
 pub use vision_deepseek_ocr::{
     parse_deepseek_ocr_vision_config, read_deepseek_ocr_vision_entries,
@@ -87,6 +91,10 @@ pub use vision_deepseek_ocr::{
 pub use vision_gemma4::{
     parse_gemma4_vision_config, EMBED_VISION_PREFIX, GEMMA4_BLOCK_ROLES,
     GEMMA4_PROJECTOR_INSTALL_NAME, GEMMA4_RESIDENT_TENSORS,
+};
+pub use vision_gemma4_unified::{
+    parse_gemma4_unified_vision_config, GEMMA4_UNIFIED_EMBEDDER_PREFIX, GEMMA4_UNIFIED_MODEL_TYPE,
+    GEMMA4_UNIFIED_ROLES,
 };
 pub use vision_idefics3::{
     parse_idefics3_vision_config, read_idefics3_vision_entries, IDEFICS3_BLOCK_ROLES,
@@ -103,6 +111,7 @@ pub use vision_internvl::{
     INTERNVL_MODEL_TYPE, INTERNVL_PROJECTOR_PREFIX, INTERNVL_TOWER_PREFIX,
 };
 pub use vision_lfm3::{parse_lfm3_vl_vision_config, refuse_lfm3_omni_d1};
+pub use vision_mage::{parse_mage_vl_vision_config, MAGE_VL_MODEL_TYPE};
 pub use vision_minicpm::{
     MERGER_PREFIX as MINICPM_MERGER_PREFIX, MINICPM_BLOCK_ROLES, MINICPM_MERGER,
     MINICPM_SOURCE_PREFIXES, MINICPM_TOWER_RESIDENT, MINICPM_VIT_MERGER,

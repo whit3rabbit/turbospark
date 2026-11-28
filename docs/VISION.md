@@ -16,6 +16,13 @@ sequential image path.
 `Gemma4` (2026-11-01) has a real image gate on a DIFFERENT tower
 (`VisionTowerKind::Gemma4`), so nothing on this page describes it: its facts,
 mask rule and gates are in [`GEMMA4_VISION_PHASE0.md`](GEMMA4_VISION_PHASE0.md).
+The `gemma4_unified` 12B reuses that trunk path with an encoder-free embedder
+(`VisionTowerKind::Gemma4Unified`); it is wired but has no real-weights gate
+([`GEMMA4_UNIFIED_VISION_PHASE0.md`](GEMMA4_UNIFIED_VISION_PHASE0.md)).
+
+LLaVA 1.6 (`VisionTowerKind::ClipNext`) runs the CLIP tower per anyres tile
+from a sidecar; synthetic tests only, no real-weights gate
+([`LLAVA_NEXT_VISION_PHASE0.md`](LLAVA_NEXT_VISION_PHASE0.md)).
 
 The other towers each have their own page, because each differs from the Qwen
 one in its blocks, preprocessing or position rule and the facts do not carry
@@ -48,6 +55,10 @@ the tower classifier, writer, and sequential runtime path, but it has no
 independent real-model image gate. Its chunked prefill remains refused, and a
 dense sidecar cannot attach to it because sidecar pairing is by exact family
 and hidden size.
+
+`mage_vl` (Mage-ViT over a plain `qwen3` trunk, 1-D positions) takes still
+images from a combined MLX install. It is tested on synthetic weights only,
+and video is not ported ([MAGE_VL_VISION_PHASE0.md](MAGE_VL_VISION_PHASE0.md)).
 
 ## Compatibility boundary
 

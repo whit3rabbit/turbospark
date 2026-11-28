@@ -41,8 +41,8 @@ pub struct ClipPreprocessParams {
     pub image_mean: [f32; 3],
     pub image_std: [f32; 3],
     pub rescale_factor: f32,
-    /// `image_grid_pinpoints` as `(height, width)` ([`ClipLayout::OneVision`]
-    /// only; empty for the other layouts).
+    /// `image_grid_pinpoints` as `(height, width)` (the two anyres layouts;
+    /// empty for the others).
     pub pinpoints: Vec<(usize, usize)>,
 }
 
@@ -57,6 +57,10 @@ pub enum ClipLayout {
     /// LLaVA-OneVision: a squashed base tile plus an anyres grid of 384-pixel
     /// tiles (`crate::onevision`). `size` is the tile.
     OneVision,
+    /// LLaVA 1.6: the same idea with 336-pixel tiles and its own packing
+    /// (`crate::llava_next`). A layout of its own so a 1.6 config can never
+    /// be read as 1.5's center crop, which it otherwise resembles key for key.
+    LlavaNext,
 }
 
 impl ClipPreprocessParams {
@@ -94,6 +98,13 @@ impl ClipPreprocessParams {
             == Some("LlavaOnevisionImageProcessor")
         {
             return Self::from_onevision_config(&root);
+        }
+        if matches!(
+            root.get("image_processor_type")
+                .and_then(serde_json::Value::as_str),
+            Some("LlavaNextImageProcessor" | "LlavaNextImageProcessorFast")
+        ) {
+            return Self::from_llava_next_config(&root);
         }
         for flag in ["do_resize", "do_center_crop", "do_rescale", "do_normalize"] {
             match root.get(flag).and_then(serde_json::Value::as_bool) {
@@ -173,6 +184,7 @@ impl ClipPreprocessParams {
             ClipLayout::Crop => self.size / CLIP_PATCH,
             ClipLayout::Pixtral => self.size / crate::pixtral::PIXTRAL_PATCH,
             ClipLayout::OneVision => self.size / crate::onevision::OV_PATCH,
+            ClipLayout::LlavaNext => self.size / CLIP_PATCH,
         }
     }
 
@@ -186,7 +198,28 @@ impl ClipPreprocessParams {
             ClipLayout::OneVision => {
                 crate::onevision::ov_max_tiles(&self.pinpoints) * self.grid() * self.grid()
             }
+            // `ov_max_tiles` counts in 384 px tiles, so count 336 px ones here.
+            ClipLayout::LlavaNext => {
+                let t = crate::llava_next::NEXT_TILE;
+                let grid = self.pinpoints.iter().map(|&(h, w)| (h / t) * (w / t));
+                (1 + grid.max().unwrap_or(1)) * self.grid() * self.grid()
+            }
             _ => self.grid() * self.grid(),
+        }
+    }
+
+    /// The most source pixels the pipeline can use from one image: the crop
+    /// or cap squared, or for LLaVA 1.6 its largest grid canvas (a client that
+    /// downscaled to one tile first would throw away what the grid reads).
+    pub fn max_source_pixels(&self) -> usize {
+        match self.layout {
+            ClipLayout::LlavaNext => self
+                .pinpoints
+                .iter()
+                .map(|&(h, w)| h * w)
+                .max()
+                .unwrap_or(0),
+            _ => self.size * self.size,
         }
     }
 
@@ -205,6 +238,11 @@ impl ClipPreprocessParams {
             // zero tokens, which the expansion refuses by name.
             ClipLayout::OneVision => (
                 crate::onevision::ov_image_tokens(height, width, &self.pinpoints).unwrap_or(0),
+                1,
+            ),
+            ClipLayout::LlavaNext => (
+                crate::llava_next::llava_next_image_tokens(height, width, &self.pinpoints)
+                    .unwrap_or(0),
                 1,
             ),
         }
@@ -229,6 +267,8 @@ impl ClipPreprocessParams {
                 crate::onevision::OV_PATCH as i64,
                 crate::onevision::OV_TILE_PATCHES as i64,
             ),
+            // One tile plus the class row; `tokens()` counts every tile.
+            ClipLayout::LlavaNext => (CLIP_PATCH as i64, (self.grid() * self.grid() + 1) as i64),
         };
         if patch_size != want_patch || num_position_embeddings != want_rows {
             return Err(format!(
@@ -240,6 +280,7 @@ impl ClipPreprocessParams {
                     ClipLayout::Crop => "crop",
                     ClipLayout::Pixtral => "longest-edge cap",
                     ClipLayout::OneVision => "tile",
+                    ClipLayout::LlavaNext => "anyres tile",
                 }
             ));
         }
@@ -252,6 +293,7 @@ impl ClipPreprocessParams {
             ClipLayout::Crop => CLIP_PATCH_DIM,
             ClipLayout::Pixtral => crate::pixtral::PIXTRAL_PATCH_DIM,
             ClipLayout::OneVision => crate::onevision::OV_PATCH_DIM,
+            ClipLayout::LlavaNext => CLIP_PATCH_DIM,
         }
     }
 
@@ -320,6 +362,92 @@ impl ClipPreprocessParams {
         Ok(Self {
             size: crate::onevision::OV_TILE,
             layout: ClipLayout::OneVision,
+            image_mean: triple("image_mean")?,
+            image_std: positive_std(triple("image_std")?)?,
+            rescale_factor,
+            pinpoints,
+        })
+    }
+
+    /// LLaVA 1.6's `preprocessor_config.json`. Refuses what the pipeline does
+    /// not implement: every step on, resample 3 (PIL bicubic), a 336 pixel
+    /// tile and crop, whole-tile pinpoints and the `anyres` aspect setting.
+    fn from_llava_next_config(root: &serde_json::Value) -> Result<Self, VisionIoError> {
+        let bad = |field: &str, why: String| VisionIoError::BadConfig {
+            field: field.to_string(),
+            why,
+        };
+        for flag in [
+            "do_resize",
+            "do_center_crop",
+            "do_rescale",
+            "do_normalize",
+            "do_pad",
+        ] {
+            match root.get(flag).and_then(serde_json::Value::as_bool) {
+                Some(true) => {}
+                other => return Err(bad(flag, format!("{other:?}; this pipeline needs true"))),
+            }
+        }
+        if root.get("resample").and_then(serde_json::Value::as_i64) != Some(3) {
+            return Err(bad("resample", "must be 3 (PIL bicubic)".into()));
+        }
+        if let Some(setting) = root.get("aspect_ratio_setting") {
+            if setting.as_str() != Some("anyres") {
+                return Err(bad(
+                    "aspect_ratio_setting",
+                    format!("{setting}; only anyres is implemented"),
+                ));
+            }
+        }
+        let tile = crate::llava_next::NEXT_TILE;
+        let side = |key: &str, axis: &str| {
+            root.get(key)
+                .and_then(|s| s.get(axis))
+                .and_then(serde_json::Value::as_u64)
+        };
+        let want = Some(tile as u64);
+        if side("size", "shortest_edge") != want
+            || side("crop_size", "height") != want
+            || side("crop_size", "width") != want
+        {
+            return Err(bad(
+                "size",
+                format!("only a {tile}-pixel shortest edge and square crop are implemented"),
+            ));
+        }
+        let pinpoints = crate::onevision::parse_pinpoints(root)?;
+        if let Some(&(h, w)) = pinpoints
+            .iter()
+            .find(|&&(h, w)| h == 0 || w == 0 || h % tile != 0 || w % tile != 0)
+        {
+            return Err(bad(
+                "image_grid_pinpoints",
+                format!("{h}x{w} is not a whole number of tiles"),
+            ));
+        }
+        let triple = |field: &str| -> Result<[f32; 3], VisionIoError> {
+            let a = root
+                .get(field)
+                .and_then(serde_json::Value::as_array)
+                .filter(|a| a.len() == 3)
+                .ok_or_else(|| bad(field, "missing or not three numbers".into()))?;
+            let mut out = [0f32; 3];
+            for (slot, v) in out.iter_mut().zip(a) {
+                *slot = v
+                    .as_f64()
+                    .ok_or_else(|| bad(field, "not a number".into()))?
+                    as f32;
+            }
+            Ok(out)
+        };
+        let rescale_factor =
+            root.get("rescale_factor")
+                .and_then(serde_json::Value::as_f64)
+                .ok_or_else(|| bad("rescale_factor", "missing".into()))? as f32;
+        Ok(Self {
+            size: tile,
+            layout: ClipLayout::LlavaNext,
             image_mean: triple("image_mean")?,
             image_std: positive_std(triple("image_std")?)?,
             rescale_factor,
@@ -432,9 +560,10 @@ pub struct ClipPatches {
     pub grid: usize,
     /// Patches per row (the grid's WIDTH).
     pub grid_w: usize,
-    /// The anyres tiling, for [`ClipLayout::OneVision`] only. Then `pixels`
-    /// holds the base tile and the grid's tiles (729 rows each), and `grid`
-    /// and `grid_w` are the prompt's placeholder count as `(tokens, 1)`.
+    /// The anyres tiling, for [`ClipLayout::OneVision`] and
+    /// [`ClipLayout::LlavaNext`] only. Then `pixels` holds the base tile and
+    /// the grid's tiles (729 or 576 rows each), and `grid` and `grid_w` are
+    /// the prompt's placeholder count as `(tokens, 1)`.
     pub anyres: Option<crate::onevision::Anyres>,
 }
 
@@ -471,6 +600,15 @@ pub fn clip_preprocess(
     }
     if params.layout == ClipLayout::OneVision {
         return crate::onevision::ov_preprocess(
+            image,
+            &params.pinpoints,
+            params.image_mean,
+            params.image_std,
+            params.rescale_factor,
+        );
+    }
+    if params.layout == ClipLayout::LlavaNext {
+        return crate::llava_next::llava_next_preprocess(
             image,
             &params.pinpoints,
             params.image_mean,

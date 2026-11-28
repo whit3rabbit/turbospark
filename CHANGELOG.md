@@ -14,6 +14,9 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- `mage_vl` still-image input for MLX conversions installed with `pull --repo`; synthetic tests only, no video. See `docs/MAGE_VL_VISION_PHASE0.md`.
+- LLaVA 1.6 (`llava_next`) image input as a `pull-vision` sidecar of its GGUF
+  `llama` trunk (CLI, server, C ABI); tested on synthetic weights only. See `docs/LLAVA_NEXT_VISION_PHASE0.md`.
 - Vision for Inkling 2 Mini: an `inkling2-mini-vision-tower` sidecar
   (`turbospark-model pull-vision`, about 636 MB range-read from the HF
   original) that pairs with every Inkling 2 Mini install, through the CLI, the
@@ -47,6 +50,22 @@ when this file gets updated relative to the version bump and the tag.
   catalog (`turbospark-model pull-audio ace-step15-turbo`) and
   `turbospark-music generate`; the silence latent is read from the pinned
   `silence_latent.pt` without unpickling.
+- `gemma4_unified` (Gemma 4 12B) image input with its encoder-free embedder,
+  combined MLX installs; audio is left out by name. Synthetic tests only, no
+  real weights run. See `docs/GEMMA4_UNIFIED_VISION_PHASE0.md`.
+- LFM3-Omni image input (`lfm3_omni`, image subset only; the audio tensors
+  are dropped by name and reported, and D1 decision models are refused). See
+  `docs/LFM3_OMNI_VISION_PHASE0.md`.
+- InternVL image input (`internvl_chat` over Qwen2, `internvl` over Qwen3)
+  with an InternViT tower, combined installs, in the CLI, the C FFI and the
+  server. The CLI was smoked on InternVL3-1B 4-bit (dense text pages read
+  poorly); the FFI and server paths are tested on a synthetic install only.
+  See `docs/INTERNVL_VISION_PHASE0.md`.
+- Qwen2-VL image input (`qwen2_vl`), smoked on the 2B 4-bit build. See
+  `docs/QWEN2VL_VISION_PHASE0.md`.
+- Idefics3 and SmolVLM image input over a Llama trunk, combined installs
+  from MLX conversions. Smoked on SmolVLM-256M only. See
+  `docs/IDEFICS3_VISION_PHASE0.md`.
 - MiniCPM-V 4.6 image input intake (`minicpmv4_6`, dense Qwen3.5 trunk, new
   `minicpm_v46` tower kind with sequential positions), combined installs from
   MLX-quantized conversions only. Smoked once on the 4-bit build. See
@@ -133,6 +152,9 @@ when this file gets updated relative to the version bump and the tag.
 - Qwen3-TTS streaming decode no longer adds the codec's transposed-conv
   bias twice at every chunk boundary (mlx-audio PR 1003), so streamed speech
   matches a one-call decode.
+- Qwen2-VL and Qwen2.5-VL images now get the vision memory budget:
+  `max_pixels` is clamped (or vision refused) like the other towers instead of
+  passing through unchecked. It bounds scratch memory, not GPU time.
 - Inkling 2 tool requests failed to render (`tojson` arguments the template
   engine refused).
 

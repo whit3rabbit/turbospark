@@ -435,6 +435,22 @@ pub(crate) fn stream_mlx(
         }
     }
 
+    // `gemma4_unified` ships an audio projector beside its image embedder.
+    // Audio is not ported: remove it by name and say so, so neither the text
+    // walk nor the image walk reaches it as an unknown tensor.
+    if is_gemma4_unified_config(&config_text) {
+        let dropped: Vec<String> = headers
+            .iter_mut()
+            .flat_map(repack::drop_gemma4_unified_audio)
+            .collect();
+        if !dropped.is_empty() {
+            progress(&format!(
+                "leaving out the gemma4_unified audio projector (audio is not supported): {}",
+                dropped.join(", ")
+            ));
+        }
+    }
+
     // The HF-native `model.visual.` spelling renames onto `vision_tower.`
     // here, for the same three families `classify_for_family` buckets as
     // `VisionTower` -- the SAME canonicalization `stream_vision_sidecar`
@@ -675,12 +691,13 @@ fn enable_requested_vision(
             | ModelFamily::Lfm3
             | ModelFamily::MuseGlimmer
     ) && !(family == ModelFamily::Llama && is_idefics3_config(config_text))
+        && !(family == ModelFamily::Gemma4 && is_gemma4_unified_config(config_text))
     {
         return Err(format!(
             "{}: combined vision ingestion is only wired for the qwen35 dense, qwen36 MoE, \
              qwen3_vl, qwen4_exp, qwen2 (Qwen2.5-VL and InternVL2.5/3), qwen3 (the internvl \
-             wrapper), lfm3 and muse_glimmer trunks, and the llama trunk of the idefics3 and \
-             smolvlm wrappers",
+             wrapper), lfm3 and muse_glimmer trunks, the llama trunk of the idefics3 and \
+             smolvlm wrappers, and the gemma4_unified trunk",
             plan.alias
         ));
     }
@@ -698,6 +715,37 @@ fn enable_requested_vision(
         ));
     }
     arch.vision = vision;
+    Ok(())
+}
+
+/// The `pull-vision` refusal for `gemma4_unified`, by name: the runtime opens
+/// its embedder from a combined install only.
+fn refuse_gemma4_unified_sidecar(
+    weights: &crate::hf::RepoRef,
+    config: &serde_json::Value,
+) -> Result<(), String> {
+    if config.get("model_type").and_then(|v| v.as_str()) == Some(repack::GEMMA4_UNIFIED_MODEL_TYPE)
+    {
+        return Err(format!(
+            "{weights}: a gemma4_unified image embedder cannot be installed as a sidecar. \
+             Install the whole checkpoint with `turbospark-model pull --repo`, which keeps it"
+        ));
+    }
+    Ok(())
+}
+
+/// The `pull-vision` refusal for `mage_vl`, by name: the runtime flattens its
+/// prompt positions for a combined install only.
+fn refuse_mage_vl_sidecar(
+    weights: &crate::hf::RepoRef,
+    config: &serde_json::Value,
+) -> Result<(), String> {
+    if config.get("model_type").and_then(|v| v.as_str()) == Some(repack::MAGE_VL_MODEL_TYPE) {
+        return Err(format!(
+            "{weights}: a mage_vl tower cannot be installed as a sidecar. Install the whole \
+             checkpoint with `turbospark-model pull --repo`, which keeps it"
+        ));
+    }
     Ok(())
 }
 
@@ -730,6 +778,18 @@ fn is_idefics3_config(config_text: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Whether a config is the `gemma4_unified` wrapper, the one case where a
+/// Gemma 4 trunk ingests a tower through the catalog. The 26B `gemma4` wrapper
+/// keeps installing text-only here, as before.
+fn is_gemma4_unified_config(config_text: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(config_text)
+        .ok()
+        .is_some_and(|v| {
+            v.get("model_type").and_then(serde_json::Value::as_str)
+                == Some(repack::GEMMA4_UNIFIED_MODEL_TYPE)
+        })
+}
+
 /// The family's vision-config reader. The `lfm3` trunk carries its own tower
 /// kind (`docs/LFM3_VL_VISION_PHASE0.md`), and the two InternVL wrappers
 /// (`internvl_chat` over qwen2, `internvl` over qwen3) carry InternViT
@@ -755,6 +815,10 @@ fn parse_vision_for_family(
         Some(repack::IDEFICS3_MODEL_TYPE) | Some(repack::SMOLVLM_MODEL_TYPE) => {
             repack::parse_idefics3_vision_config(config_text)
         }
+        Some(repack::GEMMA4_UNIFIED_MODEL_TYPE) => {
+            repack::parse_gemma4_unified_vision_config(config_text)
+        }
+        Some(repack::MAGE_VL_MODEL_TYPE) => repack::parse_mage_vl_vision_config(config_text),
         _ if family == ModelFamily::Lfm3 => repack::parse_lfm3_vl_vision_config(config_text),
         _ => repack::parse_vision_config(config_text),
     }
@@ -809,6 +873,7 @@ fn enable_bytes_detected_vision(
             | ModelFamily::Lfm3
             | ModelFamily::MuseGlimmer
     ) && !(family == ModelFamily::Llama && is_idefics3_config(config_text))
+        && !(family == ModelFamily::Gemma4 && is_gemma4_unified_config(config_text))
     {
         return Ok(());
     }
@@ -829,9 +894,11 @@ fn enable_bytes_detected_vision(
     let internvl_wrapper = root_model_type == Some(repack::INTERNVL_CHAT_MODEL_TYPE)
         || root_model_type == Some(repack::INTERNVL_MODEL_TYPE);
     let idefics3_wrapper = is_idefics3_config(config_text);
+    let unified_wrapper = is_gemma4_unified_config(config_text);
     let carries_tower = headers.iter().any(|h| {
         h.tensors.keys().any(|k| {
             k.starts_with(repack::VISION_PREFIX)
+                || (unified_wrapper && k.starts_with(repack::GEMMA4_UNIFIED_EMBEDDER_PREFIX))
                 || (idefics3_wrapper && k.starts_with(repack::IDEFICS3_TOWER_PREFIX))
                 || (internvl_wrapper
                     && (k.starts_with(repack::INTERNVL_CHAT_TOWER_PREFIX)
@@ -839,6 +906,17 @@ fn enable_bytes_detected_vision(
         })
     });
     if !carries_tower {
+        // The OptiQ conversions keep the tower in `optiq/optiq_vision.safetensors`,
+        // outside the shard set, and spell the trunk and its per-tensor widths
+        // another way. A silent text-only install would not be that model.
+        if root_model_type == Some(repack::MAGE_VL_MODEL_TYPE) {
+            return Err(format!(
+                "{}: this mage_vl conversion carries no vision_tower.* tensors in its weight \
+                 shards (the OptiQ layout keeps them in a separate file); use a plain MLX \
+                 conversion such as mlx-community/Mage-VL-8bit",
+                plan.weights
+            ));
+        }
         return Ok(());
     }
     // The bytes are present, so a config this port cannot pair with them is
@@ -1414,7 +1492,12 @@ pub(crate) fn stream_vision_sidecar(
     // intake for (the `llama` family installs from GGUF), so it cannot go
     // through `config_json_family` below. Its tower is a sidecar of that
     // GGUF trunk (`docs/LLAVA_VISION_PHASE0.md`).
-    if config.get("model_type").and_then(|m| m.as_str()) == Some(repack::LLAVA_MODEL_TYPE) {
+    // LLaVA 1.6 takes the same route, with its `image_newline` and its own
+    // tower kind (`docs/LLAVA_NEXT_VISION_PHASE0.md`).
+    if matches!(
+        config.get("model_type").and_then(|m| m.as_str()),
+        Some(repack::LLAVA_MODEL_TYPE) | Some(repack::LLAVA_NEXT_MODEL_TYPE)
+    ) {
         return stream_clip_vision_sidecar(
             weights,
             out_dir,
@@ -1508,6 +1591,8 @@ pub(crate) fn stream_vision_sidecar(
     // unrelated Qwen trunk also says, so attaching it would be silent where this tower's mergers
     // and trunk fine-tune are not interchangeable. It is a combined install.
     refuse_minicpm_sidecar(weights, &config)?;
+    refuse_gemma4_unified_sidecar(weights, &config)?;
+    refuse_mage_vl_sidecar(weights, &config)?;
     // Inkling 2 is not in the generic HF table (its trunk has its own
     // intake, `install_inkling2_repo`), so its root `model_type` is resolved
     // here; the tower then goes through the shared walk below
@@ -1716,7 +1801,24 @@ fn stream_clip_vision_sidecar(
     cache_dir: Option<&Path>,
     config_text: &str,
 ) -> Result<VisionConfig, String> {
-    let vision = repack::parse_llava_vision_config(config_text).map_err(|e| e.to_string())?;
+    let next = serde_json::from_str::<serde_json::Value>(config_text)
+        .ok()
+        .is_some_and(|c| {
+            c.get("model_type").and_then(serde_json::Value::as_str)
+                == Some(repack::LLAVA_NEXT_MODEL_TYPE)
+        });
+    let (vision, prefixes): (_, &[&str]) = if next {
+        (
+            repack::parse_llava_next_vision_config(config_text),
+            &repack::CLIP_NEXT_SOURCE_PREFIXES,
+        )
+    } else {
+        (
+            repack::parse_llava_vision_config(config_text),
+            &repack::CLIP_SOURCE_PREFIXES,
+        )
+    };
+    let vision = vision.map_err(|e| e.to_string())?;
     if !vision.is_active() {
         return Err(format!(
             "{weights} declares no vision_config; there is no tower here to install"
@@ -1729,7 +1831,7 @@ fn stream_clip_vision_sidecar(
 
     let fetched = fetch_prefixed_shards(
         weights,
-        &repack::CLIP_SOURCE_PREFIXES,
+        prefixes,
         explicit_file,
         client,
         byte_progress,
@@ -2520,8 +2622,9 @@ mod tests {
 
     use super::{
         download_cache_for_install, enable_bytes_detected_vision, enable_requested_vision,
-        immutable_download_cache, refuse_minicpm_sidecar, retain_complete_shard_set,
-        shard_names_for_prefixes, write_vision_preprocessor,
+        immutable_download_cache, refuse_gemma4_unified_sidecar, refuse_mage_vl_sidecar,
+        refuse_minicpm_sidecar, retain_complete_shard_set, shard_names_for_prefixes,
+        write_vision_preprocessor,
     };
     use crate::{Catalog, InstallPlan};
     use model_io::ModelFamily;
@@ -2925,6 +3028,196 @@ mod tests {
                 arch.family.as_str()
             );
         }
+    }
+
+    /// The whole `stream_mlx` walk over a loopback `gemma4_unified` repo: the
+    /// audio projector is named and left out, a probe plan installs the
+    /// embedder, and a plan without vision intent installs text only.
+    #[test]
+    fn a_gemma4_unified_pull_installs_the_embedder_and_leaves_audio_out() {
+        use crate::gguf_source::tests::{fixture_server, set_endpoint, ENDPOINT_LOCK};
+
+        const REVISION: &str = "0123456789abcdef0123456789abcdef01234567";
+        let _lock = ENDPOINT_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let (config, blob, _) = repack::synthetic_gemma4_unified_checkpoint(128, 6, 8);
+        let server = fixture_server(std::collections::BTreeMap::from([
+            ("config.json".to_string(), config.into_bytes()),
+            ("model.safetensors".to_string(), blob),
+            (
+                "processor_config.json".to_string(),
+                br#"{"image_processor": {"max_soft_tokens": 280}}"#.to_vec(),
+            ),
+        ]));
+        let (_reset, client) = set_endpoint(&server);
+        for from_bytes in [true, false] {
+            let dir = std::env::temp_dir().join(format!(
+                "tsp_g4_unified_pull_{}_{from_bytes}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            let mut plan = probe_plan();
+            plan.weights = crate::hf::RepoRef::new("owner/model", REVISION);
+            plan.kind = crate::SourceKind::Mlx;
+            plan.vision_from_bytes = from_bytes;
+            let mut log = Vec::new();
+            let arch = crate::stream::stream_mlx(
+                &plan,
+                &dir,
+                &client,
+                &mut |line: &str| log.push(line.to_string()),
+                None,
+                None,
+            )
+            .unwrap();
+            assert!(
+                log.iter()
+                    .any(|l| l.contains("embed_audio.embedding_projection.weight")),
+                "{log:?}"
+            );
+            assert_eq!(arch.vision.is_active(), from_bytes);
+            assert_eq!(dir.join("packed_vision/blobs.bin").is_file(), from_bytes);
+            assert_eq!(dir.join("preprocessor_config.json").is_file(), from_bytes);
+            let manifest = std::fs::read_to_string(dir.join("manifest.json")).unwrap();
+            assert_eq!(manifest.contains("\"gemma4_unified\""), from_bytes);
+            if !from_bytes {
+                assert!(
+                    log.iter().any(|l| l.contains("dropped 10 vision-tower")),
+                    "{log:?}"
+                );
+            }
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
+    /// The whole `stream_mlx` walk over a loopback `mage_vl` repo: the tower
+    /// comes in under its own kind with the preprocessor config. The same repo
+    /// with its tower outside the shard (the OptiQ layout) is refused, and so
+    /// is a sidecar.
+    #[test]
+    fn a_mage_vl_pull_installs_the_tower_or_refuses_by_name() {
+        use crate::gguf_source::tests::{fixture_server, set_endpoint, ENDPOINT_LOCK};
+
+        const REVISION: &str = "0123456789abcdef0123456789abcdef01234567";
+        let _lock = ENDPOINT_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let fixture = repack::synthetic_mage_vl_checkpoint(128, [100, 101, 102, 103]);
+        let blob = fixture.safetensors;
+        // Renaming in the header keeps every offset and length.
+        let mut towerless = blob.clone();
+        let needle = b"\"vision_tower.";
+        for at in 0..towerless.len() - needle.len() {
+            if &towerless[at..at + needle.len()] == needle {
+                towerless[at + 1..at + 7].copy_from_slice(b"audio_");
+            }
+        }
+        assert_ne!(towerless, blob);
+        for (case, shard) in [blob, towerless].into_iter().enumerate() {
+            let server = fixture_server(std::collections::BTreeMap::from([
+                (
+                    "config.json".to_string(),
+                    fixture.config_json.clone().into_bytes(),
+                ),
+                ("model.safetensors".to_string(), shard),
+                (
+                    "preprocessor_config.json".to_string(),
+                    fixture.preprocessor_json.clone().into_bytes(),
+                ),
+            ]));
+            let (_reset, client) = set_endpoint(&server);
+            let dir = std::env::temp_dir()
+                .join(format!("tsp_mage_vl_pull_{}_{case}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            let mut plan = probe_plan();
+            plan.weights = crate::hf::RepoRef::new("owner/model", REVISION);
+            plan.kind = crate::SourceKind::Mlx;
+            plan.vision_from_bytes = true;
+            let result =
+                crate::stream::stream_mlx(&plan, &dir, &client, &mut |_: &str| {}, None, None);
+            if case == 0 {
+                let arch = result.unwrap();
+                assert_eq!(arch.family, ModelFamily::Qwen3Dense);
+                assert_eq!(arch.vision.tower, model_io::VisionTowerKind::MageVit);
+                assert!(dir.join("packed_vision/blobs.bin").is_file());
+                assert!(dir.join("preprocessor_config.json").is_file());
+                let manifest = std::fs::read_to_string(dir.join("manifest.json")).unwrap();
+                assert!(manifest.contains("\"mage_vit\""), "{manifest}");
+            } else {
+                let err = result.unwrap_err();
+                assert!(err.contains("OptiQ"), "{err}");
+            }
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+        let repo = crate::hf::RepoRef::new("example/vlm", "main");
+        let err = refuse_mage_vl_sidecar(&repo, &serde_json::json!({"model_type": "mage_vl"}))
+            .unwrap_err();
+        assert!(err.contains("mage_vl"), "{err}");
+        assert!(
+            refuse_mage_vl_sidecar(&repo, &serde_json::json!({"model_type": "qwen3_5"})).is_ok()
+        );
+    }
+
+    /// Catalog intent reaches the same tower, a Gemma 4 26B config with an
+    /// embedder-shaped tensor does not, and `pull-vision` refuses by name.
+    #[test]
+    fn only_the_unified_wrapper_gets_a_gemma4_tower_through_the_catalog() {
+        let (config, _, _) = repack::synthetic_gemma4_unified_checkpoint(128, 6, 8);
+        let arch = || repack::parse_gemma4_config(&config).unwrap();
+        let headers = [header_with(&["vision_embedder.patch_dense.weight"])];
+
+        let mut enabled = arch();
+        enable_bytes_detected_vision(
+            &probe_plan(),
+            ModelFamily::Gemma4,
+            &mut enabled,
+            &headers,
+            &config,
+        )
+        .unwrap();
+        assert_eq!(
+            enabled.vision.tower,
+            model_io::VisionTowerKind::Gemma4Unified
+        );
+
+        let mut plan = probe_plan();
+        plan.include_vision = true;
+        let mut intent = arch();
+        enable_requested_vision(&plan, ModelFamily::Gemma4, &mut intent, &config).unwrap();
+        assert_eq!(intent.vision, enabled.vision);
+
+        let plain = config.replacen(
+            "\"model_type\":\"gemma4_unified\"",
+            "\"model_type\":\"gemma4\"",
+            1,
+        );
+        assert_ne!(plain, config);
+        let mut other = arch();
+        enable_bytes_detected_vision(
+            &probe_plan(),
+            ModelFamily::Gemma4,
+            &mut other,
+            &headers,
+            &plain,
+        )
+        .unwrap();
+        assert!(!other.vision.is_active());
+        assert!(enable_requested_vision(&plan, ModelFamily::Gemma4, &mut other, &plain).is_err());
+
+        let repo = crate::hf::RepoRef::new("example/vlm", "main");
+        let err = refuse_gemma4_unified_sidecar(
+            &repo,
+            &serde_json::json!({"model_type": "gemma4_unified"}),
+        )
+        .unwrap_err();
+        assert!(err.contains("gemma4_unified"), "{err}");
+        assert!(
+            refuse_gemma4_unified_sidecar(&repo, &serde_json::json!({"model_type": "gemma4"}))
+                .is_ok()
+        );
     }
 
     /// Muse-Glimmer ships `processor_config.json` with the image processor

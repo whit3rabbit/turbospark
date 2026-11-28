@@ -255,7 +255,7 @@ impl RealChatModel {
                 }
             }
         }
-        let tokenizer = MfTokenizer::load_from_dir(model_dir).map_err(|e| {
+        let mut tokenizer = MfTokenizer::load_from_dir(model_dir).map_err(|e| {
             format!(
                 "failed to load a tokenizer from {}: {e}",
                 model_dir.display()
@@ -541,6 +541,15 @@ impl RealChatModel {
                 marker,
                 fill,
             })
+        } else if runner.internvl_image_ids().is_some() {
+            // A broken install fails the open rather than serving text-only
+            // under a vision label.
+            let layout = runner
+                .internvl_layout(&|text| tokenizer.token_to_id(text), &|id| {
+                    tokenizer.id_to_token(id)
+                })
+                .map_err(|e| e.to_string())?;
+            Some(crate::vision::VisionInfo::InternVl { layout })
         } else if let Some((marker, fill)) = runner.deepseek_ocr_image_ids() {
             // DeepSeek-OCR reads its mean and std from `processor_config.json`
             // beside the tower; a broken install fails the open rather than
@@ -578,6 +587,13 @@ impl RealChatModel {
         } else {
             None
         };
+        if let Some(marker) = runner.image_part_marker() {
+            tokenizer.set_image_part_marker(marker);
+        }
+        // After the sidecar attach above: LLaVA 1.6's tower arrives that way.
+        if runner.is_llava_next_vision() {
+            tokenizer.set_string_content_as_parts();
+        }
         Ok(Self {
             tokenizer,
             runner: Mutex::new(runner),
@@ -740,6 +756,11 @@ impl RealChatModel {
                 }
                 runner
                     .set_prompt_vision_flat(&rows, spans, prompt_ids.len())
+                    .map_err(|e| RuntimeError::Producer(e.to_string()))?;
+            }
+            crate::vision::RequestImages::InternVl { images, spans } => {
+                runner
+                    .set_prompt_internvl(images, spans, prompt_ids.len())
                     .map_err(|e| RuntimeError::Producer(e.to_string()))?;
             }
             crate::vision::RequestImages::DeepseekOcr { images, spans } => {

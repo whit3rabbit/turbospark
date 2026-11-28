@@ -234,7 +234,7 @@ pub fn internvl_preprocess(
     let side_patches = params.tile / patch;
     let patch_dim = 3 * patch * patch;
     let runs = cols * rows;
-    let total_runs = runs + usize::from(runs > 1 && params.use_thumbnail);
+    let total_runs = tile_runs(runs, params);
     let mut out = InternVlTiles {
         rows: Vec::new(),
         tiles: total_runs,
@@ -286,6 +286,84 @@ pub fn internvl_preprocess(
         );
     }
     Ok(out)
+}
+
+/// Tower runs for a grid of `grid` tiles: a split image adds the thumbnail.
+fn tile_runs(grid: usize, params: &InternVlParams) -> usize {
+    grid + usize::from(grid > 1 && params.use_thumbnail)
+}
+
+/// What each image content part flattens to before the template renders. The
+/// published `internvl_chat` templates concatenate `message.content` as a
+/// string, and the reference writes `<img>` through its conversation module.
+pub const INTERNVL_IMAGE_MARKER_TEXT: &str = "<img>\n";
+
+/// One install's InternViT prompt layout: the processor settings, the tower
+/// geometry and the three span ids. The CLI, the FFI and the server all place
+/// and budget images through this, so they cannot disagree.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InternVlLayout {
+    /// The processor settings.
+    pub params: InternVlParams,
+    /// Tower patch edge.
+    pub patch: usize,
+    /// Pixel-shuffle factor.
+    pub merge: usize,
+    /// `<IMG_CONTEXT>`.
+    pub context: i32,
+    /// `<img>`.
+    pub img_start: i32,
+    /// `</img>`.
+    pub img_end: i32,
+}
+
+impl InternVlLayout {
+    /// Projector rows one tower run contributes.
+    pub fn tokens_per_tile(&self) -> usize {
+        let side = self.params.tile / self.patch / self.merge;
+        side * side
+    }
+
+    /// Context positions one `width x height` image takes, from its
+    /// dimensions alone: the same count [`internvl_preprocess`] produces.
+    pub fn tokens_for(&self, width: usize, height: usize) -> Result<usize, VisionIoError> {
+        let (cols, rows) = internvl_tile_grid(
+            width,
+            height,
+            self.params.tile,
+            self.params.min_dynamic,
+            self.params.max_dynamic,
+        )?;
+        Ok(tile_runs(cols * rows, &self.params) * self.tokens_per_tile())
+    }
+
+    /// [`internvl_expand_image_placeholders`] with whichever marker the
+    /// template rendered: bare `<IMG_CONTEXT>` (the `internvl` wrapper) or
+    /// `<img>` (`internvl_chat`). A prompt with neither is refused.
+    pub fn expand(
+        &self,
+        rendered: &[i32],
+        counts: &[usize],
+    ) -> Result<(Vec<i32>, Vec<crate::ImageSpan>), VisionIoError> {
+        let marker = if rendered.contains(&self.context) {
+            self.context
+        } else if rendered.contains(&self.img_start) {
+            self.img_start
+        } else {
+            return Err(VisionIoError::PlaceholderMismatch {
+                placeholders: 0,
+                grids: counts.len(),
+            });
+        };
+        internvl_expand_image_placeholders(
+            rendered,
+            marker,
+            self.img_start,
+            self.img_end,
+            self.context,
+            counts,
+        )
+    }
 }
 
 /// Normalizes and patchifies one `size x size` crop of `data` into `out`:
