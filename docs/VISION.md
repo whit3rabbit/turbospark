@@ -24,6 +24,10 @@ LLaVA 1.6 (`VisionTowerKind::ClipNext`) runs the CLIP tower per anyres tile
 from a sidecar; synthetic tests only, no real-weights gate
 ([`LLAVA_NEXT_VISION_PHASE0.md`](LLAVA_NEXT_VISION_PHASE0.md)).
 
+Inkling 2 Mini (`VisionTowerKind::Inkling2`) runs from a tower sidecar with a
+CLS-row ViT of its own, real-gated on the MLX 4-bit install
+([`INKLING2_VISION_PHASE0.md`](INKLING2_VISION_PHASE0.md)).
+
 The other towers each have their own page, because each differs from the Qwen
 one in its blocks, preprocessing or position rule and the facts do not carry
 over: `Qwen2.5-VL` on the `qwen2` family

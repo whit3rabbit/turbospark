@@ -90,14 +90,13 @@ removed afterwards.
 
 ## Not verified
 
-- No weights downloaded: no install, text smoke or image smoke, and no
-  quality or memory gate.
+- Idefics3-8B was never downloaded: no install or smoke for it. No quality or
+  memory gate on any checkpoint.
 - No pixel parity against HF's processor (the resize arithmetic was
   transcribed; the Lanczos filter is the crate's existing PIL port).
 - No tower comparison against mlx-vlm or transformers.
-- Tokenizer loading and dialect detection on the real `tokenizer.json` files
-  (ChatML for SmolVLM and Llama 3 for the 8B are inferred from their added
-  tokens).
+- Tokenizer loading and dialect detection on the 8B's real `tokenizer.json`
+  (Llama 3 is inferred from its added tokens).
 - Memory: all frames of an image run in one pass. SmolVLM-Instruct can reach
   26 frames of 729 rows, several hundred MiB of tower scratch that the load
   guard does not budget.
